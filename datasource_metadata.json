@@ -1,0 +1,157 @@
+{
+  "generated_at": "2026-08-29T07:42:44.213125+00:00",
+  "source_file": "Finished_Merged.hyper",
+  "datasource": {
+    "name": "Finished Merged",
+    "description": "Union of 6 yearly Hyper extracts (2020-2025) that were split out of Start.hyper by split_by_year.py and rejoined by efficient_merge.py using Hyper's native attach_database + CREATE TABLE ... AS SELECT ... UNION ALL (no row ever passed through Python). Contains 6092 rows spanning 2020-07-09 to 2025-09-23.",
+    "tags": [
+      "hyper-union",
+      "merged",
+      "yearly-split-rejoin"
+    ],
+    "certified": false,
+    "certification_note": ""
+  },
+  "stats": {
+    "row_count": 6092,
+    "match_date_min": "2020-07-09",
+    "match_date_max": "2025-09-23",
+    "years_included": [
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ]
+  },
+  "columns": [
+    {
+      "name": "Chain Id",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "Unique identifier for a possession chain -- a continuous sequence of play by one team from gaining possession until it changes hands or the ball becomes dead."
+    },
+    {
+      "name": "Match Id",
+      "type": "BIG_INT",
+      "nullable": true,
+      "description": "Unique identifier for the match this chain occurred in."
+    },
+    {
+      "name": "Season",
+      "type": "BIG_INT",
+      "nullable": true,
+      "description": "The season (year) the match belongs to, as recorded in the source system."
+    },
+    {
+      "name": "Competition",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "Name of the competition or league the match was part of."
+    },
+    {
+      "name": "Match Date",
+      "type": "DATE",
+      "nullable": true,
+      "description": "Calendar date the match was played. This is the column split_by_year.py partitions on to produce one file per year."
+    },
+    {
+      "name": "Venue",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "Name of the stadium or ground where the match was played."
+    },
+    {
+      "name": "Home Or Away",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "Whether the team recorded on this row was playing at home or away."
+    },
+    {
+      "name": "Team",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "The team in possession during this chain."
+    },
+    {
+      "name": "Opposition",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "The opposing team."
+    },
+    {
+      "name": "Period",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "The period of the match the chain occurred in (e.g. first half, second half)."
+    },
+    {
+      "name": "Period Seconds",
+      "type": "BIG_INT",
+      "nullable": true,
+      "description": "Elapsed time, in seconds, into the period when the chain started."
+    },
+    {
+      "name": "Chain Start State",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "How the chain began, e.g. from a set piece, turnover, or restart."
+    },
+    {
+      "name": "Chain Start Zone",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "The area of the field where the chain started."
+    },
+    {
+      "name": "Chain Duration Seconds",
+      "type": "BIG_INT",
+      "nullable": true,
+      "description": "Total duration of the chain, in seconds."
+    },
+    {
+      "name": "Chain Phases",
+      "type": "BIG_INT",
+      "nullable": true,
+      "description": "Number of phases (individual plays/tackles) within the chain."
+    },
+    {
+      "name": "Chain End State",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "How the chain ended, e.g. try scored, turnover, kick."
+    },
+    {
+      "name": "Ruck Speed Seconds",
+      "type": "DOUBLE",
+      "nullable": true,
+      "description": "Average time, in seconds, taken to recycle the ball at the ruck during the chain."
+    },
+    {
+      "name": "Metres Gained",
+      "type": "BIG_INT",
+      "nullable": true,
+      "description": "Net metres gained by the team in possession during the chain."
+    },
+    {
+      "name": "Set Piece Result",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "Outcome of the set piece (e.g. scrum, lineout) that started or ended the chain, where applicable."
+    },
+    {
+      "name": "Kick Territory Metres",
+      "type": "BIG_INT",
+      "nullable": true,
+      "description": "Net territory gained from kicks during the chain, in metres."
+    },
+    {
+      "name": "Turnover Origin",
+      "type": "TEXT",
+      "nullable": true,
+      "description": "How possession was lost, when the chain ended in a turnover."
+    }
+  ],
+  "column_description_disclaimer": "Column descriptions were inferred from column names and general rugby possession-chain analytics conventions by whoever wrote generate_metadata.py -- they are not sourced from authoritative documentation for this dataset. Review and correct COLUMN_DESCRIPTIONS in generate_metadata.py before relying on them."
+}
