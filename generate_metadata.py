@@ -1,7 +1,7 @@
 """
 generate_metadata.py
 
-Inspects Finished_Merged.hyper (produced by efficient_merge.py) and writes a
+Inspects Finished_Merged.hyper (produced by union_hyper_files.py) and writes a
 metadata file, datasource_metadata.json, describing it: a suggested name,
 description, tags, certification status, and per-column descriptions.
 
@@ -83,7 +83,7 @@ COLUMN_DESCRIPTION_DISCLAIMER = (
 def main():
     if not os.path.exists(HYPER_FILE):
         raise SystemExit(
-            f"{HYPER_FILE} not found. Run split_by_year.py then efficient_merge.py first."
+            f"{HYPER_FILE} not found. Run split_by_year.py then union_hyper_files.py first."
         )
 
     with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "generatemetadata") as hyper:
@@ -128,7 +128,7 @@ def main():
 
     description = (
         f"Union of {len(years)} yearly Hyper extracts ({years[0]}-{years[-1]}) that were "
-        f"split out of Start.hyper by split_by_year.py and rejoined by efficient_merge.py "
+        f"split out of Start.hyper by split_by_year.py and rejoined by union_hyper_files.py "
         f"using Hyper's native attach_database + CREATE TABLE ... AS SELECT ... UNION ALL "
         f"(no row ever passed through Python). Contains {row_count} rows spanning "
         f"{date_min} to {date_max}."

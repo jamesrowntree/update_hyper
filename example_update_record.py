@@ -4,7 +4,7 @@ example_update_record.py
 Answers the question: "can you incrementally update an existing Hyper extract?" -- yes.
 This demonstrates finding a specific row (or a specific game's worth of
 rows) in an existing .hyper file and changing one measure in place with a
-plain SQL UPDATE, instead of rebuilding the table the way efficient_merge.py
+plain SQL UPDATE, instead of rebuilding the table the way union_hyper_files.py
 does (attach_database + CREATE TABLE ... AS SELECT ... UNION ALL).
 
 The key fact that makes this possible: opening a Connection against a
@@ -50,7 +50,7 @@ def show_rows(connection, label, where_clause, max_shown=5):
 
 def main():
     if not os.path.exists(SOURCE_FILE):
-        raise SystemExit(f"{SOURCE_FILE} not found -- run split_by_year.py then efficient_merge.py first.")
+        raise SystemExit(f"{SOURCE_FILE} not found -- run split_by_year.py then union_hyper_files.py first.")
 
     shutil.copyfile(SOURCE_FILE, EXAMPLE_FILE)
     print(f"Copied {SOURCE_FILE} -> {EXAMPLE_FILE} (only the copy will be modified)")

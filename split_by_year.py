@@ -8,7 +8,7 @@ Splits Start.hyper into one .hyper file per calendar year found in the
 
 Every output file has an *identical* table structure to the source file
 (same schema name, table name, column names, column types, nullability),
-so the files can later be recombined losslessly with efficient_merge.py.
+so the files can later be recombined losslessly with union_hyper_files.py.
 
 Performance note
 -----------------

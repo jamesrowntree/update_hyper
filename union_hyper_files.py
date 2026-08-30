@@ -1,5 +1,5 @@
 """
-efficient_merge.py
+union_hyper_files.py
 
 A version of the "recommended solution" for unioning multiple Hyper files,
 adapted from Adrian Vogelsgesang's gist:

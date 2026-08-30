@@ -232,7 +232,7 @@ def main():
     ds_meta = metadata["datasource"]
 
     if not os.path.exists(HYPER_FILE):
-        raise SystemExit(f"{HYPER_FILE} not found. Run split_by_year.py then efficient_merge.py first.")
+        raise SystemExit(f"{HYPER_FILE} not found. Run split_by_year.py then union_hyper_files.py first.")
 
     tableau_auth = TSC.PersonalAccessTokenAuth(
         config["token_name"], config["token_secret"], site_id=config["site_content_url"]
