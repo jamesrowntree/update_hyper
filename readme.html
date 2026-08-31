@@ -147,6 +147,9 @@ cp .env.example .env   # then edit .env with your real Tableau Cloud details -- 
 <div class="callout warn">
   <strong>The publish step will not run until <code>.env</code> is filled in with real values.</strong> <code>split_by_year.py</code>, <code>union_hyper_files.py</code>, and <code>generate_metadata.py</code> need no configuration at all and will run right after <code>pip install</code>. Only the last step, <code>publish_to_tableau_cloud.py</code>, reads <code>.env</code> &mdash; it checks for all five required variables up front and refuses to make any network call if any are missing. See Appendix I for what each variable means and how to find your real values.
 </div>
+<div class="callout warn">
+  <strong>Every <code>python3 ...</code> command below assumes the <code>.venv</code> from this step is activated in your current shell.</strong> <code>source .venv/bin/activate</code> only affects the shell session it was run in &mdash; a new terminal tab, an IDE task runner, or any tool that spawns its own shell won't have it, so <code>python3</code> there resolves to your system Python instead, which doesn't have <code>tableauhyperapi</code> installed. If a command below fails with <code>ModuleNotFoundError: No module named 'tableauhyperapi'</code>, either re-run <code>source .venv/bin/activate</code> in that shell, or skip activation and call the venv's interpreter directly, e.g. <code>.venv/bin/python union_hyper_files.py --dry-run</code>.
+</div>
 
 <h2>4. Running it</h2>
 
@@ -171,6 +174,8 @@ cp .env.example .env   # then edit .env with your real Tableau Cloud details -- 
   0.09s  prepared output database 'Finished_Merged.hyper'
   0.10s  merged all inputs into "output"."public"."Extract"
   0.10s  done -- 6092 total rows in Finished_Merged.hyper</code></pre>
+<p>To see what would happen &mdash; per-file and total row counts, plus the exact SQL &mdash; without creating or touching <code>Finished_Merged.hyper</code>, add <code>--dry-run</code>:</p>
+<pre><code>python3 union_hyper_files.py --dry-run</code></pre>
 
 <h3>Step <span class="step-badge">2</span> Generate metadata for the merged file</h3>
 <pre><code>python3 generate_metadata.py</code></pre>
@@ -181,6 +186,8 @@ cp .env.example .env   # then edit .env with your real Tableau Cloud details -- 
 <h3>Step <span class="step-badge">3</span> Publish to Tableau Cloud</h3>
 <pre><code>python3 publish_to_tableau_cloud.py</code></pre>
 <p><strong>Requires a filled-in <code>.env</code> first</strong> (see Appendix I) &mdash; the script checks for it and refuses to run otherwise. Only <code>Finished_Merged.hyper</code> gets published &mdash; the original <code>Start.hyper</code> and the six per-year files are intermediate/demo artifacts and are never uploaded anywhere.</p>
+<p>To see exactly what would be published/updated &mdash; target site and project, datasource name, description, certification, tags, and which column descriptions would be applied &mdash; without making any network call to Tableau Cloud (nothing is published or overwritten), add <code>--dry-run</code>:</p>
+<pre><code>python3 publish_to_tableau_cloud.py --dry-run</code></pre>
 
 <h2 style="margin-top:4.5rem;">Appendix</h2>
 <p class="subtitle">Sections 1&ndash;4 above are everything you need to run the pipeline. Everything below is supporting detail: the source dataset, how the scripts work internally, optional incremental-update examples, why the approach is fast, whether it still holds up on the current API, verification results, metadata generation, and Tableau Cloud publishing specifics (including what was actually confirmed by publishing to a real site).</p>
@@ -279,11 +286,12 @@ with HyperProcess(Telemetry.SEND_USAGE_DATA_TO_TABLEAU, 'unionfiles_efficient') 
         connection.execute_command(create_table_sql)
         print(f"{time() - start_time}: Done :)")</code></pre>
 
-<p>The version in this repo (<code>union_hyper_files.py</code>) follows exactly the same structure, with three practical changes:</p>
+<p>The version in this repo (<code>union_hyper_files.py</code>) follows exactly the same structure, with four practical changes:</p>
 <ul>
   <li>Uses <code>glob("Start_*.hyper")</code> and fully-qualified 3-part <code>TableName(alias, schema, table)</code> objects (<code>"input0"."public"."Extract"</code>) to match this project's actual schema name, <code>public</code>, rather than the demo's <code>Extract</code> schema.</li>
   <li>Uses <code>create_schema_if_not_exists</code> instead of <code>create_schema</code>, since <code>public</code> already exists by default in every freshly created Hyper database (the gist's custom <code>Extract</code> schema did not, so it needed unconditional creation).</li>
   <li>Uses <code>Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU</code>, drops the gist's stray <code>print(table_name)</code> debug statement (visible as the bare <code>"Extract"."Extract"</code> line in the blog's own console output, between the &ldquo;Attached&rdquo; and &ldquo;Prepared&rdquo; timing lines), and adds a final <code>SELECT COUNT(*)</code> sanity check after the merge, printing the resulting row count for confirmation instead.</li>
+  <li>Adds a <code>--dry-run</code> flag (not present in the original gist). With it, the script still attaches every input file and runs a <code>SELECT COUNT(*)</code> per input, and prints the <code>CREATE TABLE ... AS ... UNION ALL ...</code> statement it would run &mdash; but it skips deleting, creating, or writing <code>Finished_Merged.hyper</code> entirely, so you can sanity-check inputs before committing to a rebuild.</li>
 </ul>
 <p>The core, performance-critical logic is unchanged:</p>
 <ol>
@@ -456,6 +464,11 @@ python3 example_add_new_rows.py</code></pre>
   <li><strong>Tags</strong> &mdash; also not part of the publish payload; tags are a separate resource with their own endpoint. The script sets <code>published_ds.tags</code> on the item <em>returned by</em> <code>publish()</code> (which has a real ID) and calls <code>server.datasources.update_tags(...)</code> as its own step, right after publishing.</li>
   <li><strong>Column-level descriptions</strong> &mdash; see below. Not part of the publish payload either, and not set via Tableau Catalog &mdash; via editing the datasource's own definition file directly.</li>
 </ul>
+
+<h3><code>--dry-run</code></h3>
+<p>
+  Add <code>--dry-run</code> to preview the plan above &mdash; target server/site/project, datasource name, description, certification, tags, and the list of columns that have a description to apply &mdash; without constructing a <code>TSC.Server</code> at all. This matters because <code>TSC.Server(url, use_server_version=True)</code> makes a network call (a server-info request) <em>before sign-in even happens</em>, just to negotiate the REST API version &mdash; so <code>--dry-run</code> returns before that line is reached, rather than merely skipping <code>publish()</code>. It still requires the same filled-in <code>.env</code> as a real run (the preview is only useful if it reflects the real target), but nothing is published, overwritten, or sent over the network. Because it never talks to the server, it can't know which column descriptions are new vs. already-set on the live datasource &mdash; it just lists which ones would be sent.
+</p>
 
 <h3>Column descriptions: two approaches tried; one is a dead end for this publish pattern, the other works</h3>
 

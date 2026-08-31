@@ -50,6 +50,8 @@ columns up correctly. split_by_year.py guarantees this because every
 output file is derived from the same source table.
 """
 
+import argparse
+import re
 from glob import glob
 from time import time
 import os
@@ -60,22 +62,55 @@ from tableauhyperapi import (
     Telemetry,
     SchemaName,
     TableName,
+    HyperException,
 )
 
 INPUT_GLOB = "Start_*.hyper"
+INPUT_YEAR_RE = re.compile(r"Start_(\d{4})\.hyper$")
 SCHEMA_NAME = "public"
 TABLE = "Extract"
 OUTPUT_FILE = "Finished_Merged.hyper"
 
 
+def warn_if_years_missing(input_files):
+    """Warn if the matched files skip a year, e.g. Start_2022.hyper is
+    missing between Start_2021.hyper and Start_2023.hyper. Doesn't hardcode
+    an expected year range since split_by_year.py derives years from
+    whatever's actually in Start.hyper -- it just flags gaps in whatever
+    years were found.
+    """
+    years = sorted(
+        int(m.group(1)) for f in input_files if (m := INPUT_YEAR_RE.search(f))
+    )
+    missing = sorted(set(range(years[0], years[-1] + 1)) - set(years)) if years else []
+    if missing:
+        print(f"WARNING: no input file(s) found for year(s) {missing} "
+              f"(found {years}) -- the merge will silently skip them")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Merge Start_*.hyper files into Finished_Merged.hyper using Hyper's native UNION ALL."
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Attach the input files and report how many rows each contains "
+            "and how many the union would produce, without touching "
+            f"{OUTPUT_FILE!r} or writing anything to disk."
+        ),
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     input_files = sorted(glob(INPUT_GLOB))
     if not input_files:
         raise SystemExit(f"No input files found matching {INPUT_GLOB!r}")
-
-    # Delete the output file so the script can be safely rerun.
-    if os.path.exists(OUTPUT_FILE):
-        os.remove(OUTPUT_FILE)
+    warn_if_years_missing(input_files)
 
     start_time = time()
     with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "unionfiles_efficient") as hyper:
@@ -84,8 +119,30 @@ def main():
 
             # Attach every input file under a unique alias in one shot.
             for i, file in enumerate(input_files):
-                catalog.attach_database(file, alias=f"input{i}")
+                try:
+                    catalog.attach_database(file, alias=f"input{i}")
+                except HyperException as e:
+                    raise SystemExit(f"Could not attach {file!r} as a Hyper database: {e}")
             print(f"{time() - start_time:6.2f}s  attached {len(input_files)} input file(s): {input_files}")
+
+            input_tables = [TableName(f"input{i}", SCHEMA_NAME, TABLE) for i in range(len(input_files))]
+            union_query = " UNION ALL\n".join(f"SELECT * FROM {t}" for t in input_tables)
+
+            if args.dry_run:
+                print("-- DRY RUN: no output file will be created or modified --")
+                total_rows = 0
+                for file, table in zip(input_files, input_tables):
+                    row_count = connection.execute_scalar_query(f"SELECT COUNT(*) FROM {table}")
+                    total_rows += row_count
+                    print(f"{time() - start_time:6.2f}s  {file}: {row_count} rows")
+                print(f"{time() - start_time:6.2f}s  would merge {total_rows} total rows into {OUTPUT_FILE!r}")
+                print("\nSQL that would be executed:")
+                print(f"CREATE TABLE {TableName('output', SCHEMA_NAME, TABLE)} AS\n{union_query}")
+                return
+
+            # Delete the output file so the script can be safely rerun.
+            if os.path.exists(OUTPUT_FILE):
+                os.remove(OUTPUT_FILE)
 
             # Prepare the output database.
             catalog.create_database(OUTPUT_FILE)
@@ -93,12 +150,8 @@ def main():
             catalog.create_schema_if_not_exists(SchemaName("output", SCHEMA_NAME))
             print(f"{time() - start_time:6.2f}s  prepared output database {OUTPUT_FILE!r}")
 
-            # Build the single CREATE TABLE ... AS ... UNION ALL ... statement.
+            # Build and execute the single CREATE TABLE ... AS ... UNION ALL ... statement.
             output_table = TableName("output", SCHEMA_NAME, TABLE)
-            union_query = " UNION ALL\n".join(
-                f'SELECT * FROM {TableName(f"input{i}", SCHEMA_NAME, TABLE)}'
-                for i in range(len(input_files))
-            )
             create_table_sql = f"CREATE TABLE {output_table} AS\n{union_query}"
 
             connection.execute_command(create_table_sql)

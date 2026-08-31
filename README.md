@@ -59,6 +59,8 @@ cp .env.example .env   # then edit .env with your real Tableau Cloud details -- 
 
 > **The publish step will not run until `.env` is filled in with real values.** `split_by_year.py`, `union_hyper_files.py`, and `generate_metadata.py` need no configuration at all and will run right after `pip install`. Only the last step, `publish_to_tableau_cloud.py`, reads `.env` — it checks for all five required variables up front and refuses to make any network call if any are missing. See Appendix I for what each variable means and how to find your real values.
 
+> **Every `python3 ...` command below assumes the `.venv` from this step is activated in your current shell.** `source .venv/bin/activate` only affects the shell session it was run in — a new terminal tab, an IDE task runner, or any tool that spawns its own shell won't have it, so `python3` there resolves to your system Python instead, which doesn't have `tableauhyperapi` installed. If a command below fails with `ModuleNotFoundError: No module named 'tableauhyperapi'`, either re-run `source .venv/bin/activate` in that shell, or skip activation and call the venv's interpreter directly, e.g. `.venv/bin/python union_hyper_files.py --dry-run`.
+
 ## 4. Running it
 
 **OPTIONAL — Split `Start.hyper` by year**
@@ -98,6 +100,12 @@ Expected output:
   0.10s  done -- 6092 total rows in Finished_Merged.hyper
 ```
 
+To see what would happen — per-file and total row counts, plus the exact SQL — without creating or touching `Finished_Merged.hyper`, add `--dry-run`:
+
+```
+python3 union_hyper_files.py --dry-run
+```
+
 **Step 2 — Generate metadata for the merged file**
 
 ```
@@ -118,6 +126,12 @@ python3 publish_to_tableau_cloud.py
 ```
 
 **Requires a filled-in `.env` first** (see Appendix I) — the script checks for it and refuses to run otherwise. Only `Finished_Merged.hyper` gets published — the original `Start.hyper` and the six per-year files are intermediate/demo artifacts and are never uploaded anywhere.
+
+To see exactly what would be published/updated — target site and project, datasource name, description, certification, tags, and which column descriptions would be applied — without making any network call to Tableau Cloud (nothing is published or overwritten), add `--dry-run`:
+
+```
+python3 publish_to_tableau_cloud.py --dry-run
+```
 
 ---
 
@@ -223,11 +237,12 @@ with HyperProcess(Telemetry.SEND_USAGE_DATA_TO_TABLEAU, 'unionfiles_efficient') 
         print(f"{time() - start_time}: Done :)")
 ```
 
-The version in this repo (`union_hyper_files.py`) follows exactly the same structure, with three practical changes:
+The version in this repo (`union_hyper_files.py`) follows exactly the same structure, with four practical changes:
 
 - Uses `glob("Start_*.hyper")` and fully-qualified 3-part `TableName(alias, schema, table)` objects (`"input0"."public"."Extract"`) to match this project's actual schema name, `public`, rather than the demo's `Extract` schema.
 - Uses `create_schema_if_not_exists` instead of `create_schema`, since `public` already exists by default in every freshly created Hyper database (the gist's custom `Extract` schema did not, so it needed unconditional creation).
 - Uses `Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU`, drops the gist's stray `print(table_name)` debug statement (visible as the bare `"Extract"."Extract"` line in the blog's own console output, between the "Attached" and "Prepared" timing lines), and adds a final `SELECT COUNT(*)` sanity check after the merge, printing the resulting row count for confirmation instead.
+- Adds a `--dry-run` flag (not present in the original gist). With it, the script still attaches every input file and runs a `SELECT COUNT(*)` per input, and prints the `CREATE TABLE ... AS ... UNION ALL ...` statement it would run — but it skips deleting, creating, or writing `Finished_Merged.hyper` entirely, so you can sanity-check inputs before committing to a rebuild.
 
 The core, performance-critical logic is unchanged:
 
@@ -385,6 +400,8 @@ Example of the generated file's shape (see the actual `datasource_metadata.json`
 - **Name, description, certification** — set on the `DatasourceItem` before publish, carried in the initial publish request.
 - **Tags** — also not part of the publish payload; tags are a separate resource with their own endpoint. The script sets `published_ds.tags` on the item *returned by* `publish()` (which has a real ID) and calls `server.datasources.update_tags(...)` as its own step, right after publishing.
 - **Column-level descriptions** — see below. Not part of the publish payload either, and not set via Tableau Catalog — via editing the datasource's own definition file directly.
+
+**`--dry-run`.** Add `--dry-run` to preview the plan above — target server/site/project, datasource name, description, certification, tags, and the list of columns that have a description to apply — without constructing a `TSC.Server` at all. This matters because `TSC.Server(url, use_server_version=True)` makes a network call (a server-info request) *before sign-in even happens*, just to negotiate the REST API version — so `--dry-run` returns before that line is reached, rather than merely skipping `publish()`. It still requires the same filled-in `.env` as a real run (the preview is only useful if it reflects the real target), but nothing is published, overwritten, or sent over the network. Because it never talks to the server, it can't know which column descriptions are new vs. already-set on the live datasource — it just lists which ones would be sent.
 
 **Column descriptions: two approaches tried; one is a dead end for this publish pattern, the other works.**
 

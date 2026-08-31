@@ -22,8 +22,15 @@ Tableau Personal Access Token that can publish/overwrite content on your site.
 
 Usage:
     python3 publish_to_tableau_cloud.py
+
+    python3 publish_to_tableau_cloud.py --dry-run
+        Prints what would be published/updated -- target site and project,
+        datasource name, description, certification, tags, and which column
+        descriptions would be applied -- without making any network call to
+        Tableau Cloud (nothing is published or overwritten).
 """
 
+import argparse
 import io
 import json
 import os
@@ -55,6 +62,23 @@ REQUIRED_ENV_VARS = [
     "TABLEAU_TOKEN_NAME",
     "TABLEAU_TOKEN_SECRET",
 ]
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Publish Finished_Merged.hyper to Tableau Cloud and apply datasource_metadata.json."
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Print what would be published -- target site/project, datasource "
+            "name, description, certification, tags, and which column "
+            "descriptions would be applied -- without making any network "
+            "call to Tableau Cloud."
+        ),
+    )
+    return parser.parse_args()
 
 
 def load_config():
@@ -226,13 +250,50 @@ def apply_column_descriptions(server, datasource_item, columns_metadata):
     print(f"Republished with column descriptions: {updated} updated, {created} newly created.")
 
 
+def print_dry_run(config, ds_meta, columns_metadata):
+    """
+    Reports the same plan main() would otherwise execute, derived entirely
+    from local config/metadata -- no TSC.Server is constructed, so this
+    makes zero network calls (even TSC.Server(..., use_server_version=True)
+    itself would ping the server, which is why this returns before that
+    line rather than short-circuiting inside a `with server.auth.sign_in`
+    block).
+    """
+    print("-- DRY RUN: no network call will be made, nothing will be published --")
+    print(f"Target: {config['server_url']}  site={config['site_content_url']!r}  project={config['project_name']!r}")
+    print(f"Would publish {HYPER_FILE!r} as data source {config['datasource_name']!r} (PublishMode.Overwrite):")
+    print(f"  description: {ds_meta.get('description') or '(none)'}")
+    certified = bool(ds_meta.get("certified", False))
+    note = f" -- {ds_meta['certification_note']}" if ds_meta.get("certification_note") else ""
+    print(f"  certified: {certified}{note}")
+    tags = sorted(set(ds_meta.get("tags", [])))
+    print(f"  tags: {tags if tags else '(none)'}")
+
+    describable = [
+        col for col in columns_metadata
+        if (col.get("description") or "").strip()
+        and col["description"].strip() != "No description available."
+    ]
+    print(
+        f"  column descriptions: {len(describable)} of {len(columns_metadata)} "
+        "column(s) would be applied (via a follow-up download/patch/republish of the .tds)"
+    )
+    for col in describable:
+        print(f"    {col['name']!r}: {col['description']}")
+
+
 def main():
+    args = parse_args()
     config = load_config()
     metadata = load_metadata()
     ds_meta = metadata["datasource"]
 
     if not os.path.exists(HYPER_FILE):
         raise SystemExit(f"{HYPER_FILE} not found. Run split_by_year.py then union_hyper_files.py first.")
+
+    if args.dry_run:
+        print_dry_run(config, ds_meta, metadata.get("columns", []))
+        return
 
     tableau_auth = TSC.PersonalAccessTokenAuth(
         config["token_name"], config["token_secret"], site_id=config["site_content_url"]
