@@ -22,6 +22,12 @@ publish_to_tableau_cloud.py reads this file's output (via its own
 description, tags, certification) and per-column descriptions to the
 published data source.
 
+Calculated fields cannot be profiled from data -- their formulas are
+author-supplied. If the output file already contains a "calculations"
+block, this script carries it forward unchanged when re-profiling, so
+regenerating the metadata never wipes hand-added calculated fields.
+publish_to_tableau_cloud.py applies that block too.
+
 Usage (run from the project root; paths are just examples -- this is a generic
 tool that accepts any single-table .hyper file):
     python3 scripts/generate_metadata.py --source=<file>.hyper [options]
@@ -245,6 +251,17 @@ def main():
     datasource_name = args.name or os.path.splitext(os.path.basename(hyper_file))[0].replace("_", " ")
     tags = sorted({t.strip() for t in args.tags.split(",") if t.strip()})
 
+    # Calculated fields are author-supplied (this profiler can't invent
+    # formulas), so if the output file already has a "calculations" block,
+    # carry it forward rather than clobbering it when re-profiling.
+    preserved_calculations = []
+    if os.path.exists(output_file):
+        try:
+            with open(output_file) as f:
+                preserved_calculations = json.load(f).get("calculations", [])
+        except (json.JSONDecodeError, OSError):
+            preserved_calculations = []
+
     with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "generatemetadata") as hyper:
         with Connection(hyper.endpoint, hyper_file) as connection:
             table_name, table_def = get_table_definition(connection, hyper_file)
@@ -301,6 +318,7 @@ def main():
             } if date_stats else {}),
         },
         "columns": columns,
+        **({"calculations": preserved_calculations} if preserved_calculations else {}),
         "column_description_disclaimer": COLUMN_DESCRIPTION_DISCLAIMER,
     }
 
@@ -308,6 +326,8 @@ def main():
         json.dump(metadata, f, indent=2, default=str)
 
     print(f"Wrote metadata for {len(columns)} column(s) to {output_file}")
+    if preserved_calculations:
+        print(f"Preserved {len(preserved_calculations)} existing calculated field(s) from {output_file}.")
     summary = f"  {row_count} row(s)"
     if date_stats:
         summary += f", {date_stats['min']} to {date_stats['max']}, years: {date_stats['years_included']}"

@@ -154,5 +154,15 @@
       "description": "TEXT column with 4 distinct value(s), e.g. 'Kick Receipt', 'Own-Restart-Loss', 'Set-Piece', 'Turnover-Own', None."
     }
   ],
+  "calculations": [
+    {
+      "name": "Metres Per Phase",
+      "formula": "[Metres Gained] / [Chain Phases]",
+      "datatype": "real",
+      "role": "measure",
+      "type": "quantitative",
+      "description": "Metres gained per phase in the chain (Metres Gained / Chain Phases)."
+    }
+  ],
   "column_description_disclaimer": "Column descriptions were generated automatically by profiling each column's own data (type, distinct-value count, and either a value range or a few sample values) -- they describe the shape of the data, not what it means. This script has no domain knowledge of the dataset. Review and edit before treating them as documentation."
 }
