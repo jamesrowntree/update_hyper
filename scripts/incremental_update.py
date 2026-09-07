@@ -1,19 +1,14 @@
 """
 incremental_update.py
 
-The incremental-append half of the extract-mutation examples (its sibling,
-update_existing_rows.py, is the edit-in-place half). This demonstrates
-appending brand-new rows to an EXISTING extract without rebuilding it the way
-union_hyper_files.py does (attach_database + CREATE TABLE ... AS SELECT ...
-UNION ALL over every yearly file).
+This appends new rows to an EXISTING extract without rebuilding it.
 
-The new rows live in their own data source: New_Rows.hyper (produced by 
+The new rows come from their own data source: New_Rows.hyper (produced by 
 generate_new_rows.py), a single table with the same 21-column shape as the 
-extract's "Extract" table. This script attaches to that file and appends 
-every row from it into the target hyper file, with one engine-side
-`INSERT INTO ... SELECT * FROM ...` -- the same attach_database +
-execute_command pattern update_existing_rows.py, union_hyper_files.py and
-generate_split_by_year.py all use.
+extract's "Extract" table. 
+
+This script attaches to that file and appends every row from it into the 
+target hyper file, with one engine-side `INSERT INTO ... SELECT * FROM ...`. 
 
 The key facts that make this possible:
   * Opening a Connection against a .hyper file uses CreateMode.NONE by default,
@@ -23,7 +18,8 @@ The key facts that make this possible:
   * execute_command() runs any SQL statement (INSERT INTO ... SELECT ...)
     entirely inside Hyper.
 
-HELP -- new data in Snowflake instead of a .hyper file? 
+What if my new data is in Snowflake instead of a .hyper file? 
+
 This append step is source-agnostic: it only ever reads the attached New_Rows.hyper, 
 so it stays EXACTLY the same no matter where those rows came from. 
 The Hyper engine cannot attach Snowflake directly, so the Snowflake pull happens 
