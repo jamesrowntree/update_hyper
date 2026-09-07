@@ -38,11 +38,18 @@ from tableauhyperapi import (
     Inserter,
 )
 
+# --- Configuration -----------------------------------------------------------
+# The file we produce and the table inside it. Unqualified here ("public".
+# "Updates") because this script owns the whole file; example_update_record.py
+# attaches it under the "updates" alias when it reads it.
 UPDATES_FILE = "Updates.hyper"
 UPDATES_TABLE = TableName("public", "Updates")
 
-# Column types match the target table in datasource_metadata.json:
-# "Chain Id" is TEXT and "Metres Gained" is BIG_INT.
+# --- Table shape -------------------------------------------------------------
+# The schema of the payload table. Column types match the target table in
+# datasource_metadata.json ("Chain Id" is TEXT, "Metres Gained" is BIG_INT).
+# Both are NOT_NULLABLE: a null key would match nothing, and this example has
+# no need to set a measure to NULL.
 UPDATES_TABLE_DEF = TableDefinition(
     table_name=UPDATES_TABLE,
     columns=[
@@ -51,10 +58,12 @@ UPDATES_TABLE_DEF = TableDefinition(
     ],
 )
 
+# --- The payload -------------------------------------------------------------
+# This is the data that used to be hardcoded inside example_update_record.py.
 # Each pair is [Chain Id, New Metres Gained]. These are real Chain Ids from
 # Finished_Merged.hyper (a Wallabies vs. England match on 2021-07-11), so the
-# before/after in example_update_record.py is concrete and verifiable. Add
-# more real Chain Ids here to update more rows -- no code changes needed.
+# before/after in example_update_record.py is concrete and verifiable. To change
+# which rows get updated, edit this list and re-run -- no other code changes.
 UPDATE_ROWS = [
     ["110023590_001", 25],   # was 10
     ["110023590_002", 15],   # was 4
@@ -66,16 +75,19 @@ UPDATE_ROWS = [
 
 def main():
     with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "generateupdates") as hyper:
-        # CREATE_AND_REPLACE makes the script safely re-runnable: it starts
-        # the file fresh every time.
+        # 1. Open (create) the output file. CREATE_AND_REPLACE makes the script
+        #    safely re-runnable: it starts the file fresh every time.
         with Connection(hyper.endpoint, UPDATES_FILE, CreateMode.CREATE_AND_REPLACE) as connection:
+            # 2. Create the schema and the empty table from the definition above.
             connection.catalog.create_schema_if_not_exists(SchemaName("public"))
             connection.catalog.create_table(UPDATES_TABLE_DEF)
 
+            # 3. Bulk-insert the payload rows in one go.
             with Inserter(connection, UPDATES_TABLE_DEF) as inserter:
                 inserter.add_rows(UPDATE_ROWS)
                 inserter.execute()
 
+            # 4. Read the row count back as a sanity check on what we wrote.
             written = connection.execute_scalar_query(f"SELECT COUNT(*) FROM {UPDATES_TABLE}")
 
     print(f"Wrote {written} update row(s) to {UPDATES_FILE} (table {UPDATES_TABLE}).")
