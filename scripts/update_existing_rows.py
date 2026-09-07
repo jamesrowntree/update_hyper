@@ -1,5 +1,5 @@
 """
-incremental_update.py
+update_existing_rows.py
 
 Answers the question: "can you incrementally update an existing Hyper extract?" -- yes.
 This demonstrates changing one measure in place on existing rows with a plain
@@ -11,7 +11,7 @@ Updates.hyper (produced by generate_updates.py), which holds one row per
 update to apply: a "Chain Id" key and the "New Metres Gained" value to set.
 This script attaches that file and applies every row in a single engine-side
 `UPDATE ... FROM` join -- the same attach_database + execute_command pattern
-union_hyper_files.py and split_by_year.py use, so the update values never
+union_hyper_files.py and generate_split_by_year.py use, so the update values never
 cross into Python.
 
 The key facts that make this possible:
@@ -26,9 +26,9 @@ This script never touches Finished_Merged.hyper. It copies it to
 Example_Update.hyper first and edits the copy, so it's safe to re-run and
 never disturbs the file that's actually published to Tableau Cloud.
 
-Usage:
-    python3 generate_updates.py        # once, to create Updates.hyper
-    python3 incremental_update.py
+Usage (from the project root):
+    python3 scripts/generate_updates.py     # once, to create data/Updates.hyper
+    python3 scripts/update_existing_rows.py
 """
 
 import os
@@ -37,7 +37,8 @@ import shutil
 from tableauhyperapi import HyperProcess, Connection, Telemetry, TableName
 
 # --- Configuration -----------------------------------------------------------
-# The three files this script touches:
+# The three files this script touches (these are the short display names used in
+# the output below; the on-disk locations are resolved just after, as *_PATH):
 #   SOURCE_FILE  - the real extract; read-only, never modified.
 #   EXAMPLE_FILE - a disposable copy of SOURCE_FILE; this is what we edit.
 #   UPDATES_FILE - the externalised update payload built by generate_updates.py.
@@ -45,9 +46,19 @@ SOURCE_FILE = "Finished_Merged.hyper"
 EXAMPLE_FILE = "Example_Update.hyper"
 UPDATES_FILE = "Updates.hyper"
 
+# This script lives in scripts/; all .hyper files live in the project's data/
+# folder (a sibling of scripts/). Resolve paths relative to this file so it runs
+# from any working directory: the source extract, the disposable copy, and the
+# update payload all live in data/.
+HERE = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(os.path.dirname(HERE), "data")
+SOURCE_PATH = os.path.join(DATA_DIR, SOURCE_FILE)
+EXAMPLE_PATH = os.path.join(DATA_DIR, EXAMPLE_FILE)
+UPDATES_PATH = os.path.join(DATA_DIR, UPDATES_FILE)
+
 # Both files are attached under their own alias (see attach_database below) and
 # referenced with fully-qualified "alias"."schema"."table" names, exactly like
-# union_hyper_files.py and split_by_year.py.
+# union_hyper_files.py and generate_split_by_year.py.
 TABLE = TableName("target", "public", "Extract")           # the copy we edit
 UPDATES_TABLE = TableName("updates", "public", "Updates")  # the payload we read
 
@@ -70,25 +81,25 @@ def show_rows(connection, label, where_clause, max_shown=10):
 def main():
     # 1. Preconditions -- both the source extract and the update payload must
     #    exist before we do anything. Fail early with an actionable message.
-    if not os.path.exists(SOURCE_FILE):
-        raise SystemExit(f"{SOURCE_FILE} not found -- run split_by_year.py then union_hyper_files.py first.")
-    if not os.path.exists(UPDATES_FILE):
+    if not os.path.exists(SOURCE_PATH):
+        raise SystemExit(f"{SOURCE_FILE} not found -- run generate_split_by_year.py then union_hyper_files.py first.")
+    if not os.path.exists(UPDATES_PATH):
         raise SystemExit(f"{UPDATES_FILE} not found -- run generate_updates.py first to create the update source.")
 
     # 2. Work on a throwaway copy, so the real extract (and the live Tableau
     #    Cloud data source it backs) is never at risk and the script is re-runnable.
-    shutil.copyfile(SOURCE_FILE, EXAMPLE_FILE)
+    shutil.copyfile(SOURCE_PATH, EXAMPLE_PATH)
     print(f"Copied {SOURCE_FILE} -> {EXAMPLE_FILE} (only the copy will be modified)")
 
-    with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "incrementalupdate") as hyper:
+    with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "updateexistingrows") as hyper:
         # 3. Open a bare connection and attach both files under their own alias, so
         #    a single SQL engine sees both. attach_database uses CreateMode.NONE:
         #    the files are opened as-is, NOT recreated or wiped. The target
         #    ("target"."public"."Extract") is the disposable copy; the update
         #    source is "updates"."public"."Updates".
         with Connection(hyper.endpoint) as connection:
-            connection.catalog.attach_database(EXAMPLE_FILE, alias="target")
-            connection.catalog.attach_database(UPDATES_FILE, alias="updates")
+            connection.catalog.attach_database(EXAMPLE_PATH, alias="target")
+            connection.catalog.attach_database(UPDATES_PATH, alias="updates")
 
             # The rows we're about to touch are exactly the keys in the update
             # source, so filter Extract to those Chain Ids for the before/after.

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>update_hyper: Splitting and Efficiently Re-merging a Hyper Extract</title>
+<title>tableau_update_hyper: Splitting and Efficiently Re-merging a Hyper Extract</title>
 <style>
   :root {
     --bg: #ffffff;
@@ -88,15 +88,15 @@
 </head>
 <body>
 
-<h1>update_hyper</h1>
-<p class="subtitle">Splitting <code>Start.hyper</code> into one file per year, and merging it back together as fast as Hyper allows.</p>
+<h1>tableau_update_hyper &mdash; the Union pipeline</h1>
+<p class="subtitle">Splitting <code>Start.hyper</code> into one file per year, and merging it back together as fast as Hyper allows. This is the core sub-project; see <a href="README.md">README.md</a> for the whole repo, and <a href="README_update_existing_rows.html">README_update_existing_rows.html</a> / <a href="README_incremental_update.html">README_incremental_update.html</a> for the incremental-update examples.</p>
 
 <h2>1. What this project does</h2>
 <p>
   This project takes a single Tableau <code>.hyper</code> extract, <code>Start.hyper</code>, and:
 </p>
 <ol>
-  <li><strong>Splits</strong> it into one <code>.hyper</code> file per calendar year of data (<code>split_by_year.py</code>), where every output file shares an identical table structure with the source (same schema name, table name, column names, column types, and nullability).</li>
+  <li><strong>Splits</strong> it into one <code>.hyper</code> file per calendar year of data (<code>generate_split_by_year.py</code>), where every output file shares an identical table structure with the source (same schema name, table name, column names, column types, and nullability).</li>
   <li><strong>Merges</strong> those per-year files back into a single file (<code>union_hyper_files.py</code>), using the fastest technique the Tableau Hyper API supports for combining files &mdash; attaching every file to one Hyper process and executing a single native <code>UNION ALL</code> query, rather than copying rows through Python one at a time.</li>
 </ol>
 <p>
@@ -108,57 +108,56 @@
 
 <h2>2. Project layout</h2>
 <div class="file-tree">
-update_hyper/<br>
-├── Start.hyper&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# original, untouched source extract<br>
-├── split_by_year.py&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Start.hyper -&gt; Start_&lt;year&gt;.hyper (one per year)<br>
-├── union_hyper_files.py&nbsp;# Start_*.hyper -&gt; Finished_Merged.hyper (recombined)<br>
-├── generate_metadata.py&nbsp;# Finished_Merged.hyper -&gt; datasource_metadata.json<br>
-├── publish_to_tableau_cloud.py&nbsp;# publishes --source as --target, optionally applying a --metadata JSON file<br>
-├── publish_to_tableau_cloud.ps1&nbsp;# PowerShell wrapper for the script above (Windows)<br>
+tableau_update_hyper/<br>
+├── README.md&nbsp;# overview of every script, links to the HTML guides<br>
+├── readme_Union.html&nbsp;# this guide (the core split -&gt; merge -&gt; metadata -&gt; publish pipeline)<br>
+├── README_update_existing_rows.html&nbsp;# guide: update existing rows from a .hyper payload<br>
+├── README_incremental_update.html&nbsp;# guide: append brand-new rows from a .hyper payload<br>
+├── requirements.txt&nbsp;# pinned package versions<br>
+├── .env.example&nbsp;# template for the publish step's config -- copy to .env and fill in<br>
 │<br>
-├── generate_updates.py&nbsp;&nbsp;# optional -- creates Updates.hyper (see Appendix D)<br>
-├── incremental_update.py&nbsp;&nbsp;# optional -- see Appendix D<br>
-├── example_add_new_rows.py&nbsp;&nbsp;&nbsp;&nbsp;# optional -- see Appendix D<br>
+├── scripts/&nbsp;# all code: the Python scripts + the PowerShell wrapper<br>
+│&nbsp;&nbsp;&nbsp;├── generate_split_by_year.py&nbsp;# Start.hyper -&gt; Start_&lt;year&gt;.hyper (one per year)<br>
+│&nbsp;&nbsp;&nbsp;├── union_hyper_files.py&nbsp;# Start_*.hyper -&gt; Finished_Merged.hyper (native UNION ALL)<br>
+│&nbsp;&nbsp;&nbsp;├── generate_metadata.py&nbsp;# any --source .hyper file -&gt; a metadata JSON file<br>
+│&nbsp;&nbsp;&nbsp;├── publish_to_tableau_cloud.py&nbsp;# publishes --source as --target, optionally applying --metadata<br>
+│&nbsp;&nbsp;&nbsp;├── publish_to_tableau_cloud.ps1&nbsp;# PowerShell wrapper for the script above (Windows)<br>
+│&nbsp;&nbsp;&nbsp;├── generate_updates.py&nbsp;# builds data/Updates.hyper (the update payload)<br>
+│&nbsp;&nbsp;&nbsp;├── update_existing_rows.py&nbsp;# applies Updates.hyper with one UPDATE ... FROM<br>
+│&nbsp;&nbsp;&nbsp;├── generate_new_rows.py&nbsp;# builds data/New_Rows.hyper (the append payload)<br>
+│&nbsp;&nbsp;&nbsp;└── incremental_update.py&nbsp;# appends New_Rows.hyper with one INSERT INTO ... SELECT *<br>
 │<br>
-├── requirements.txt&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# pinned package versions<br>
-├── .env.example&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# template for the publish script's config -- copy to .env and fill in<br>
-├── readme.html&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# full documentation (canonical)<br>
-├── README.md&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;# Markdown copy of readme.html, for GitHub<br>
-│<br>
-├── Start_2020.hyper&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;┐<br>
-├── Start_2021.hyper&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│<br>
-├── Start_2022.hyper&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├── generated by split_by_year.py<br>
-├── Start_2023.hyper&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│<br>
-├── Start_2024.hyper&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;│<br>
-├── Start_2025.hyper&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;┘<br>
-│<br>
-├── Finished_Merged.hyper&nbsp;&nbsp;# generated by union_hyper_files.py -- the file normally passed as --source<br>
-├── datasource_metadata.json&nbsp;# generated by generate_metadata.py -- the file normally passed as --metadata<br>
-│<br>
-├── Updates.hyper&nbsp;# generated by generate_updates.py -- the update payload incremental_update.py reads<br>
-├── Example_Update.hyper&nbsp;# generated by incremental_update.py (disposable copy, safe to re-run)<br>
-└── Example_Insert.hyper&nbsp;&nbsp;# generated by example_add_new_rows.py (disposable copy, safe to re-run)<br>
+└── data/&nbsp;# every .hyper file + the generated metadata JSON<br>
+&nbsp;&nbsp;&nbsp;&nbsp;├── Start.hyper&nbsp;# original, untouched source extract<br>
+&nbsp;&nbsp;&nbsp;&nbsp;├── Start_2020.hyper ... Start_2025.hyper&nbsp;# generated by generate_split_by_year.py<br>
+&nbsp;&nbsp;&nbsp;&nbsp;├── Finished_Merged.hyper&nbsp;# generated by union_hyper_files.py -- normally passed as --source<br>
+&nbsp;&nbsp;&nbsp;&nbsp;├── datasource_metadata.json&nbsp;# generated by generate_metadata.py -- normally passed as --metadata<br>
+&nbsp;&nbsp;&nbsp;&nbsp;├── Updates.hyper&nbsp;# generated by generate_updates.py (update payload)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;├── New_Rows.hyper&nbsp;# generated by generate_new_rows.py (append payload)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;├── Example_Update.hyper&nbsp;# generated by update_existing_rows.py (disposable)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;└── Example_Insert.hyper&nbsp;# generated by incremental_update.py (disposable)<br>
 </div>
 
 <h2>3. Setup</h2>
 <p>Requires Python 3.9&ndash;3.13. <code>tableauhyperapi</code> ships its own embedded Hyper engine binary (no separate Tableau install needed); <code>tableauserverclient</code> is Tableau's official REST API client, used only by the publish step.</p>
-<pre><code>cd update_hyper
+<pre><code>cd tableau_update_hyper
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # then edit .env with your real Tableau Cloud details -- see Appendix I</code></pre>
+<p>All commands below are run from the project root. The scripts live in <code>scripts/</code> and the <code>.hyper</code>/<code>.json</code> files in <code>data/</code>; each script resolves its data paths relative to its own location, so it reads and writes <code>data/</code> no matter which directory you run it from.</p>
 <div class="callout warn">
-  <strong>The publish step will not run until <code>.env</code> is filled in with real values.</strong> <code>split_by_year.py</code>, <code>union_hyper_files.py</code>, and <code>generate_metadata.py</code> need no configuration at all and will run right after <code>pip install</code>. Only the last step, <code>publish_to_tableau_cloud.py</code>, reads <code>.env</code> &mdash; it checks for all five required variables up front and refuses to make any network call if any are missing. See Appendix I for what each variable means and how to find your real values.
+  <strong>The publish step will not run until <code>.env</code> is filled in with real values.</strong> <code>generate_split_by_year.py</code>, <code>union_hyper_files.py</code>, and <code>generate_metadata.py</code> need no configuration at all and will run right after <code>pip install</code>. Only the last step, <code>publish_to_tableau_cloud.py</code>, reads <code>.env</code> &mdash; it checks for all five required variables up front and refuses to make any network call if any are missing. See Appendix I for what each variable means and how to find your real values.
 </div>
 <div class="callout warn">
-  <strong>Every <code>python3 ...</code> command below assumes the <code>.venv</code> from this step is activated in your current shell.</strong> <code>source .venv/bin/activate</code> only affects the shell session it was run in &mdash; a new terminal tab, an IDE task runner, or any tool that spawns its own shell won't have it, so <code>python3</code> there resolves to your system Python instead, which doesn't have <code>tableauhyperapi</code> installed. If a command below fails with <code>ModuleNotFoundError: No module named 'tableauhyperapi'</code>, either re-run <code>source .venv/bin/activate</code> in that shell, or skip activation and call the venv's interpreter directly, e.g. <code>.venv/bin/python union_hyper_files.py --dry-run</code>.
+  <strong>Every <code>python3 ...</code> command below assumes the <code>.venv</code> from this step is activated in your current shell.</strong> <code>source .venv/bin/activate</code> only affects the shell session it was run in &mdash; a new terminal tab, an IDE task runner, or any tool that spawns its own shell won't have it, so <code>python3</code> there resolves to your system Python instead, which doesn't have <code>tableauhyperapi</code> installed. If a command below fails with <code>ModuleNotFoundError: No module named 'tableauhyperapi'</code>, either re-run <code>source .venv/bin/activate</code> in that shell, or skip activation and call the venv's interpreter directly, e.g. <code>.venv/bin/python scripts/union_hyper_files.py --dry-run</code>.
 </div>
 
 <h2>4. Running it</h2>
 
 <h3><span class="tag-optional">OPTIONAL</span>Split <code>Start.hyper</code> by year</h3>
 <p>Skip this if you already have your own set of per-year (or per-whatever) <code>.hyper</code> files with matching table structure &mdash; it exists to produce a realistic multi-file input for the next step from the single <code>Start.hyper</code> in this repo.</p>
-<pre><code>python3 split_by_year.py</code></pre>
+<pre><code>python3 scripts/generate_split_by_year.py</code></pre>
 <p>Expected output:</p>
 <pre><code>  0.04s  attached Start.hyper as "source"
   0.04s  found 6 year(s): [2020, 2021, 2022, 2023, 2024, 2025]
@@ -171,45 +170,45 @@ cp .env.example .env   # then edit .env with your real Tableau Cloud details -- 
   0.18s  done</code></pre>
 
 <h3>Step <span class="step-badge">1</span> UNION the per-year files into one single extract</h3>
-<pre><code>python3 union_hyper_files.py</code></pre>
+<pre><code>python3 scripts/union_hyper_files.py</code></pre>
 <p>Expected output:</p>
 <pre><code>  0.07s  attached 6 input file(s): ['Start_2020.hyper', ..., 'Start_2025.hyper']
   0.09s  prepared output database 'Finished_Merged.hyper'
   0.10s  merged all inputs into "output"."public"."Extract"
   0.10s  done -- 6092 total rows in Finished_Merged.hyper</code></pre>
 <p>To see what would happen &mdash; per-file and total row counts, plus the exact SQL &mdash; without creating or touching <code>Finished_Merged.hyper</code>, add <code>--dry-run</code>:</p>
-<pre><code>python3 union_hyper_files.py --dry-run</code></pre>
+<pre><code>python3 scripts/union_hyper_files.py --dry-run</code></pre>
 
 <h3>Step <span class="step-badge">2</span> Generate metadata for the merged file</h3>
-<pre><code>python3 generate_metadata.py --source=Finished_Merged.hyper --output=datasource_metadata.json</code></pre>
+<pre><code>python3 scripts/generate_metadata.py --source=data/Finished_Merged.hyper --output=data/datasource_metadata.json</code></pre>
 <p>Expected output:</p>
 <pre><code>Wrote metadata for 21 column(s) to datasource_metadata.json
   6092 row(s), 2020-07-09 to 2025-09-23, years: [2020, 2021, 2022, 2023, 2024, 2025]</code></pre>
 <p><code>--source</code> is <strong>required</strong>, same as <code>publish_to_tableau_cloud.py</code>. This is a generic tool &mdash; it profiles whatever columns are actually in the file (type, distinct-value count, and either a min/max range or a few sample values) rather than relying on any hand-written, dataset-specific descriptions, so it works unchanged against a different <code>.hyper</code> file. If <code>--output</code> is omitted, it defaults to the <code>--source</code> path with its extension swapped from <code>.hyper</code> to <code>.json</code> (e.g. <code>Finished_Merged.hyper</code> &rarr; <code>Finished_Merged.json</code>) &mdash; the command above passes <code>--output=datasource_metadata.json</code> explicitly to match the filename already committed in this repo. The datasource name defaults to the <code>--source</code> filename (underscores &rarr; spaces). All of these can be set explicitly:</p>
-<pre><code>python3 generate_metadata.py --source=Some_Other_Extract.hyper --output=some_other_metadata.json \
+<pre><code>python3 scripts/generate_metadata.py --source=data/Some_Other_Extract.hyper --output=data/some_other_metadata.json \
     --name "Some Other Extract" --tags team-a,quarterly --certified --certification-note "Reviewed by BI team"</code></pre>
 
 <h3>Step <span class="step-badge">3</span> Publish to Tableau Cloud</h3>
-<pre><code>python3 publish_to_tableau_cloud.py --source=Finished_Merged.hyper --metadata=datasource_metadata.json</code></pre>
+<pre><code>python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper --metadata=data/datasource_metadata.json</code></pre>
 <p><strong>Requires a filled-in <code>.env</code> first</strong> (see Appendix I) &mdash; the script checks for it and refuses to run otherwise, and now tells you exactly what to run if <code>.env</code> is missing or incomplete.</p>
 <p><code>--source</code> is <strong>required</strong> &mdash; there is no default <code>.hyper</code> file baked into the script. Omitting it is an error that prints the exact flag format to use:</p>
-<pre><code>$ python3 publish_to_tableau_cloud.py
+<pre><code>$ python3 scripts/publish_to_tableau_cloud.py
 Missing required argument: --source (no .hyper file to publish was specified).
 Usage:   --source=&lt;path-to-file&gt;.hyper
-Example: python3 publish_to_tableau_cloud.py --source=Finished_Merged.hyper</code></pre>
+Example: python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper</code></pre>
 <p><code>--target</code> is <strong>optional</strong> &mdash; it's the name the data source will have on Tableau Cloud. If omitted, it's derived from the <code>--source</code> filename (underscores become spaces), e.g. <code>Finished_Merged.hyper</code> &rarr; "Finished Merged". Pass it explicitly to override that:</p>
-<pre><code>python3 publish_to_tableau_cloud.py --source=Finished_Merged.hyper --target="Rugby Chains"</code></pre>
+<pre><code>python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper --target="Rugby Chains"</code></pre>
 <p><code>--metadata</code> is <strong>optional</strong> &mdash; omit it to publish with no description, certification, tags, or column descriptions applied:</p>
-<pre><code>python3 publish_to_tableau_cloud.py --source=Finished_Merged.hyper</code></pre>
+<pre><code>python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper</code></pre>
 <p>Pass it to apply a metadata JSON file (as produced by <code>generate_metadata.py</code>) to the published data source:</p>
-<pre><code>python3 publish_to_tableau_cloud.py --source=Finished_Merged.hyper --metadata=datasource_metadata.json</code></pre>
+<pre><code>python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper --metadata=data/datasource_metadata.json</code></pre>
 <p>Asking for metadata that doesn't exist is an error, not a silent no-op &mdash; pointing <code>--metadata</code> at a missing file fails with:</p>
 <pre><code>Metadata file 'does_not_exist.json' not found, but --metadata asked for it to be applied.
 Run generate_metadata.py to generate one, point --metadata at an existing metadata JSON file (--metadata=&lt;path-to-file&gt;.json), or drop --metadata entirely to publish without applying any metadata.</code></pre>
 <p>To see exactly what would be published/updated &mdash; target site and project, datasource name, description, certification, tags, and which column descriptions would be applied &mdash; without making any network call to Tableau Cloud (nothing is published or overwritten), add <code>--dry-run</code>:</p>
-<pre><code>python3 publish_to_tableau_cloud.py --source=Finished_Merged.hyper --target="Rugby Chains" --metadata=datasource_metadata.json --dry-run</code></pre>
-<p><strong>Windows / PowerShell:</strong> <code>publish_to_tableau_cloud.ps1</code> wraps the same script for PowerShell users &mdash; it locates the right Python interpreter (preferring <code>.venv</code>), checks that <code>.env</code> exists, and forwards its parameters to <code>publish_to_tableau_cloud.py</code>. Run <code>Get-Help .\publish_to_tableau_cloud.ps1 -Full</code> for the required/optional environment variables and usage examples, e.g.:</p>
-<pre><code>.\publish_to_tableau_cloud.ps1 -Source Finished_Merged.hyper -Target "Rugby Chains" -Metadata datasource_metadata.json -DryRun</code></pre>
+<pre><code>python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper --target="Rugby Chains" --metadata=data/datasource_metadata.json --dry-run</code></pre>
+<p><strong>Windows / PowerShell:</strong> <code>scripts\publish_to_tableau_cloud.ps1</code> wraps the same script for PowerShell users &mdash; it locates the right Python interpreter (preferring <code>.venv</code> in the project root), checks that <code>.env</code> exists, and forwards its parameters to <code>publish_to_tableau_cloud.py</code>. Run it from the project root; use <code>Get-Help .\scripts\publish_to_tableau_cloud.ps1 -Full</code> for the required/optional environment variables and usage examples, e.g.:</p>
+<pre><code>.\scripts\publish_to_tableau_cloud.ps1 -Source data\Finished_Merged.hyper -Target "Rugby Chains" -Metadata data\datasource_metadata.json -DryRun</code></pre>
 
 <h2 style="margin-top:4.5rem;">Appendix</h2>
 <p class="subtitle">Sections 1&ndash;4 above are everything you need to run the pipeline. Everything below is supporting detail: the source dataset, how the scripts work internally, optional incremental-update examples, why the approach is fast, whether it still holds up on the current API, verification results, metadata generation, and Tableau Cloud publishing specifics (including what was actually confirmed by publishing to a real site).</p>
@@ -242,7 +241,7 @@ Run generate_metadata.py to generate one, point --metadata at an existing metada
   <tr><td>Kick Territory Metres</td><td>BIG_INT</td></tr>
   <tr><td>Turnover Origin</td><td>TEXT</td></tr>
 </table>
-<p>Row counts per year, as split by <code>split_by_year.py</code>:</p>
+<p>Row counts per year, as split by <code>generate_split_by_year.py</code>:</p>
 <table>
   <tr><th>Year</th><th>Rows</th><th>Output file</th></tr>
   <tr><td>2020</td><td>1,027</td><td><code>Start_2020.hyper</code></td></tr>
@@ -254,7 +253,7 @@ Run generate_metadata.py to generate one, point --metadata at an existing metada
   <tr><td><strong>Total</strong></td><td><strong>6,092</strong></td><td><code>Start.hyper</code></td></tr>
 </table>
 
-<h2>Appendix B: How <code>split_by_year.py</code> works</h2>
+<h2>Appendix B: How <code>generate_split_by_year.py</code> works</h2>
 <p>
   Rather than reading every row into Python and re-writing it into per-year files with an <code>Inserter</code> (which would require deserializing and re-serializing all 6,092 rows through the API), the script keeps everything inside the Hyper engine:
 </p>
@@ -338,28 +337,34 @@ SELECT * FROM "input5"."public"."Extract"</code></pre>
 
 <h2>Appendix D: Incremental updates to an existing extract (optional, standalone examples)</h2>
 <p>
-  <code>union_hyper_files.py</code> always rebuilds <code>Finished_Merged.hyper</code> from scratch, re-attaching and re-<code>UNION ALL</code>-ing every yearly file. A natural follow-up question: can you update an existing extract in place instead, without a full rebuild? Two standalone example scripts answer this &mdash; they are not part of the main pipeline (nothing in Setup or Running It depends on them), and they're the last two files in the project layout above.
+  <code>union_hyper_files.py</code> always rebuilds <code>Finished_Merged.hyper</code> from scratch, re-attaching and re-<code>UNION ALL</code>-ing every yearly file. A natural follow-up question: can you update an existing extract in place instead, without a full rebuild? Two standalone examples answer this &mdash; an in-place <code>UPDATE</code> and an incremental append &mdash; whose scripts live alongside the pipeline scripts in <code>scripts/</code> but are not part of the main pipeline (nothing in Setup or Running It depends on them). Each pairs an <em>apply</em> script with a small <em>generator</em> that builds its <code>.hyper</code> payload. Each also has its own dedicated guide: <a href="README_update_existing_rows.html">README_update_existing_rows.html</a> (update) and <a href="README_incremental_update.html">README_incremental_update.html</a> (append).
 </p>
 <div class="callout good">
-  <strong>Yes.</strong> Opening a <code>Connection</code> against a <code>.hyper</code> file defaults to <code>CreateMode.NONE</code>, which does <em>not</em> wipe the file &mdash; it just opens it read-write. From there, <code>execute_command</code> runs ordinary SQL (<code>UPDATE ... SET ... WHERE ...</code>, <code>INSERT INTO ... SELECT ...</code>), and <code>Inserter</code> appends rows to a table that must already exist (it looks up the table's definition via <code>catalog.get_table_definition(...)</code> rather than creating one). Neither example ever touches <code>Finished_Merged.hyper</code> itself &mdash; each copies it first (<code>Example_Update.hyper</code>, <code>Example_Insert.hyper</code>) and only modifies the copy, so both are safe to re-run and never disturb the file that's actually published to Tableau Cloud.
+  <strong>Yes.</strong> Opening a <code>Connection</code> against a <code>.hyper</code> file defaults to <code>CreateMode.NONE</code>, which does <em>not</em> wipe the file &mdash; it just opens it read-write. From there, both apply scripts follow the same idiom as the rest of the project: attach the payload file under an alias and run <strong>one</strong> <code>execute_command</code> &mdash; a cross-database <code>UPDATE ... FROM</code> or <code>INSERT INTO ... SELECT *</code> &mdash; so no row data is ever marshalled into Python. (The <code>.hyper</code> payload files themselves are built by the two generator scripts, which is where <code>Inserter</code> and <code>catalog.get_table_definition(...)</code> are used.) Neither apply script ever touches <code>Finished_Merged.hyper</code> itself &mdash; each copies it first (<code>Example_Update.hyper</code>, <code>Example_Insert.hyper</code>) and only modifies the copy, so both are safe to re-run and never disturb the file that's actually published to Tableau Cloud.
 </div>
 
-<h3><code>incremental_update.py</code> &mdash; change a measure on existing rows, driven by a data source</h3>
+<h3><code>update_existing_rows.py</code> &mdash; change a measure on existing rows, driven by a data source</h3>
 <p>The update payload is <em>not</em> hardcoded in the script. It lives in its own <code>Updates.hyper</code> file (built by <code>generate_updates.py</code>), a single <code>"public"."Updates"</code> table with one row per update: a <code>"Chain Id"</code> key and the <code>"New Metres Gained"</code> value to set. The example attaches both <code>Example_Update.hyper</code> (the disposable copy) and <code>Updates.hyper</code> under aliases, then applies every update in <strong>one</strong> engine-side statement:</p>
 <pre><code>UPDATE "target"."public"."Extract" AS e
 SET "Metres Gained" = u."New Metres Gained"
 FROM "updates"."public"."Updates" AS u
 WHERE e."Chain Id" = u."Chain Id"</code></pre>
-<p>This is the same <code>attach_database</code> + single <code>execute_command</code> pattern used by <code>union_hyper_files.py</code> and <code>split_by_year.py</code>, so no update value is ever marshalled into Python. The seed rows use real Chain Ids from a Wallabies vs. England match (e.g. <code>110023590_001</code>, original <code>Metres Gained = 10</code>), so the before/after is concrete and verifiable. To change <em>which</em> rows are updated, edit <code>generate_updates.py</code> and regenerate <code>Updates.hyper</code> &mdash; the script itself never changes.</p>
+<p>This is the same <code>attach_database</code> + single <code>execute_command</code> pattern used by <code>union_hyper_files.py</code> and <code>generate_split_by_year.py</code>, so no update value is ever marshalled into Python. The seed rows use real Chain Ids from a Wallabies vs. England match (e.g. <code>110023590_001</code>, original <code>Metres Gained = 10</code>), so the before/after is concrete and verifiable. To change <em>which</em> rows are updated, edit <code>generate_updates.py</code> and regenerate <code>Updates.hyper</code> &mdash; the script itself never changes.</p>
 
-<h3><code>example_add_new_rows.py</code> &mdash; append brand-new rows</h3>
+<h3><code>incremental_update.py</code> &mdash; append brand-new rows, driven by a data source</h3>
 <p>
-  Builds one new row matching the table's 21-column order and appends it with <code>Inserter</code> &mdash; no <code>attach_database</code>, no <code>UNION ALL</code>, just <code>get_table_definition</code> followed by <code>add_row</code>/<code>execute</code>. Row count goes from 6,092 to 6,093; the new row is read back to confirm it landed correctly.
+  The symmetric counterpart to the update example: the new rows are <em>not</em> hardcoded either. They live in their own <code>New_Rows.hyper</code> file (built by <code>generate_new_rows.py</code>), a single <code>"public"."New_Rows"</code> table with exactly the same 21-column shape as <code>Extract</code>. The example attaches both <code>Example_Insert.hyper</code> (the disposable copy) and <code>New_Rows.hyper</code> under aliases, then appends every row in <strong>one</strong> engine-side statement:
+</p>
+<pre><code>INSERT INTO "target"."public"."Extract"
+SELECT * FROM "newrows"."public"."New_Rows"</code></pre>
+<p>
+  Because <code>New_Rows</code> matches <code>Extract</code> column-for-column, <code>SELECT *</code> lines up 1:1 and no row data is ever marshalled into Python &mdash; the same <code>attach_database</code> + single <code>execute_command</code> idiom as the update example. Row count goes from 6,092 to 6,095 (three seed rows for a fictional future match); the appended rows are read back to confirm they landed. To change <em>which</em> rows are appended, edit <code>generate_new_rows.py</code> and regenerate <code>New_Rows.hyper</code> &mdash; the apply script never changes. <code>generate_new_rows.py</code> (and <code>incremental_update.py</code>) carry a commented block explaining how to source the rows from Snowflake instead of a hand-built <code>.hyper</code> payload: because the Hyper engine can't attach Snowflake directly and the apply script only ever reads the attached <code>New_Rows.hyper</code>, only the generator changes.
 </p>
 <p>Run either with:</p>
-<pre><code>python3 generate_updates.py      # once, to create Updates.hyper for the update example
-python3 incremental_update.py
-python3 example_add_new_rows.py</code></pre>
+<pre><code>python3 scripts/generate_updates.py       # once, to create data/Updates.hyper for the update example
+python3 scripts/update_existing_rows.py
+python3 scripts/generate_new_rows.py      # once, to create data/New_Rows.hyper for the insert example
+python3 scripts/incremental_update.py</code></pre>
 
 <h2>Appendix E: Why this is the fastest way to combine Hyper files</h2>
 <p>There are two fundamentally different ways to combine multiple <code>.hyper</code> files, and they have very different performance characteristics:</p>
@@ -385,7 +390,7 @@ python3 example_add_new_rows.py</code></pre>
   <li>It's a single round trip: one <code>execute_command</code> call regardless of whether you're combining 2 files or 200.</li>
 </ul>
 <div class="callout good">
-  This is exactly the technique Tableau's own engineers recommend (hence &ldquo;the recommended solution&rdquo;) and it is what both <code>split_by_year.py</code> and <code>union_hyper_files.py</code> use &mdash; in the split script, the <code>WHERE</code>-filtered <code>CREATE TABLE ... AS SELECT</code> against the attached source runs natively for the same reason.
+  This is exactly the technique Tableau's own engineers recommend (hence &ldquo;the recommended solution&rdquo;) and it is what both <code>generate_split_by_year.py</code> and <code>union_hyper_files.py</code> use &mdash; in the split script, the <code>WHERE</code>-filtered <code>CREATE TABLE ... AS SELECT</code> against the attached source runs natively for the same reason.
 </div>
 
 <h3>The blog's own benchmark</h3>
@@ -539,7 +544,7 @@ python3 example_add_new_rows.py</code></pre>
 </ul>
 
 <footer>
-  Generated for the update_hyper project. Split/merge scripts tested against <code>tableauhyperapi==0.0.26359</code>; publish script tested against <code>tableauserverclient==0.41</code> on Python 3.13, including a real publish to a live Tableau Cloud site (see Appendix I).
+  Generated for the tableau_update_hyper project. Split/merge scripts tested against <code>tableauhyperapi==0.0.26359</code>; publish script tested against <code>tableauserverclient==0.41</code> on Python 3.13, including a real publish to a live Tableau Cloud site (see Appendix I).
 </footer>
 
 </body>

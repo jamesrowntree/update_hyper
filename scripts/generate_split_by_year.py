@@ -1,5 +1,5 @@
 """
-split_by_year.py
+generate_split_by_year.py
 
 Splits Start.hyper into one .hyper file per calendar year found in the
 "Match Date" column of the "public"."Extract" table:
@@ -48,8 +48,17 @@ SOURCE_TABLE = "Extract"
 DATE_COLUMN = '"Match Date"'
 OUTPUT_PATTERN = "Start_{year}.hyper"
 
+# Every .hyper file lives in the project's data/ folder, a sibling of this
+# scripts/ folder. Resolve it relative to this file (not the current working
+# directory) so the script runs correctly from anywhere.
+DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+SOURCE_PATH = os.path.join(DATA_DIR, SOURCE_FILE)
+
 
 def main():
+    if not os.path.exists(SOURCE_PATH):
+        raise SystemExit(f"{SOURCE_FILE} not found in data/ (looked in {DATA_DIR}).")
+
     start_time = time()
 
     with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "splitbyyear") as hyper:
@@ -58,7 +67,7 @@ def main():
 
             # Attach the source file under an alias so it can be referenced
             # in SQL as "source"."public"."Extract".
-            catalog.attach_database(SOURCE_FILE, alias="source")
+            catalog.attach_database(SOURCE_PATH, alias="source")
             source_table = TableName("source", SOURCE_SCHEMA, SOURCE_TABLE)
             print(f"{time() - start_time:6.2f}s  attached {SOURCE_FILE} as \"source\"")
 
@@ -75,13 +84,14 @@ def main():
             print(f"{time() - start_time:6.2f}s  found {len(years)} year(s): {years}")
 
             for year in years:
-                output_file = OUTPUT_PATTERN.format(year=year)
-                if os.path.exists(output_file):
-                    os.remove(output_file)
+                output_name = OUTPUT_PATTERN.format(year=year)
+                output_path = os.path.join(DATA_DIR, output_name)
+                if os.path.exists(output_path):
+                    os.remove(output_path)
 
                 alias = f"year_{year}"
-                catalog.create_database(output_file)
-                catalog.attach_database(output_file, alias=alias)
+                catalog.create_database(output_path)
+                catalog.attach_database(output_path, alias=alias)
                 catalog.create_schema_if_not_exists(SchemaName(alias, SOURCE_SCHEMA))
 
                 out_table = TableName(alias, SOURCE_SCHEMA, SOURCE_TABLE)
@@ -98,7 +108,7 @@ def main():
                 catalog.detach_database(alias)
 
                 print(
-                    f"{time() - start_time:6.2f}s  wrote {output_file} "
+                    f"{time() - start_time:6.2f}s  wrote {output_name} "
                     f"({row_count} rows)"
                 )
 

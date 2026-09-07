@@ -1,14 +1,14 @@
 """
 generate_updates.py
 
-Builds Updates.hyper -- the small data source that incremental_update.py
+Builds Updates.hyper -- the small data source that update_existing_rows.py
 reads its update payload from, instead of hardcoding the values in Python.
 
 Why a generator script? .hyper files are binary and there is no CSV-import
 path in this repo, so every .hyper file here is produced by a script (see
-split_by_year.py and union_hyper_files.py). This is the one place that
+generate_split_by_year.py and union_hyper_files.py). This is the one place that
 defines a table *from scratch* with an explicit TableDefinition, rather than
-deriving it from an existing file the way example_add_new_rows.py does with
+deriving it from an existing file the way generate_new_rows.py does with
 catalog.get_table_definition(...).
 
 The output is a single table, "public"."Updates", with one row per update to
@@ -17,13 +17,15 @@ apply:
     "Chain Id"          -- the key, matches "Chain Id" in Finished_Merged.hyper
     "New Metres Gained" -- the absolute value to set "Metres Gained" to
 
-incremental_update.py attaches this file and applies every row in one
+update_existing_rows.py attaches this file and applies every row in one
 engine-side `UPDATE ... FROM` join, so the update values never cross into
 Python.
 
-Usage:
-    python3 generate_updates.py
+Usage (from the project root):
+    python3 scripts/generate_updates.py
 """
+
+import os
 
 from tableauhyperapi import (
     HyperProcess,
@@ -40,10 +42,17 @@ from tableauhyperapi import (
 
 # --- Configuration -----------------------------------------------------------
 # The file we produce and the table inside it. Unqualified here ("public".
-# "Updates") because this script owns the whole file; incremental_update.py
+# "Updates") because this script owns the whole file; update_existing_rows.py
 # attaches it under the "updates" alias when it reads it.
-UPDATES_FILE = "Updates.hyper"
+UPDATES_FILE = "Updates.hyper"          # display name (see UPDATES_PATH for the real location)
 UPDATES_TABLE = TableName("public", "Updates")
+
+# This script lives in scripts/; the payload file is written into the project's
+# data/ folder (a sibling of scripts/), resolved relative to __file__ so it runs
+# from any working directory, alongside the .hyper files update_existing_rows.py reads.
+HERE = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(os.path.dirname(HERE), "data")
+UPDATES_PATH = os.path.join(DATA_DIR, UPDATES_FILE)
 
 # --- Table shape -------------------------------------------------------------
 # The schema of the payload table. Column types match the target table in
@@ -59,10 +68,10 @@ UPDATES_TABLE_DEF = TableDefinition(
 )
 
 # --- The payload -------------------------------------------------------------
-# This is the data that used to be hardcoded inside incremental_update.py.
+# This is the data that used to be hardcoded inside update_existing_rows.py.
 # Each pair is [Chain Id, New Metres Gained]. These are real Chain Ids from
 # Finished_Merged.hyper (a Wallabies vs. England match on 2021-07-11), so the
-# before/after in incremental_update.py is concrete and verifiable. To change
+# before/after in update_existing_rows.py is concrete and verifiable. To change
 # which rows get updated, edit this list and re-run -- no other code changes.
 UPDATE_ROWS = [
     ["110023590_001", 25],   # was 10
@@ -77,7 +86,7 @@ def main():
     with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "generateupdates") as hyper:
         # 1. Open (create) the output file. CREATE_AND_REPLACE makes the script
         #    safely re-runnable: it starts the file fresh every time.
-        with Connection(hyper.endpoint, UPDATES_FILE, CreateMode.CREATE_AND_REPLACE) as connection:
+        with Connection(hyper.endpoint, UPDATES_PATH, CreateMode.CREATE_AND_REPLACE) as connection:
             # 2. Create the schema and the empty table from the definition above.
             connection.catalog.create_schema_if_not_exists(SchemaName("public"))
             connection.catalog.create_table(UPDATES_TABLE_DEF)

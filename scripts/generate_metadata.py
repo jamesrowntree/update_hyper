@@ -22,21 +22,24 @@ publish_to_tableau_cloud.py reads this file's output (via its own
 description, tags, certification) and per-column descriptions to the
 published data source.
 
-Usage:
-    python3 generate_metadata.py --source=<file>.hyper [options]
+Usage (run from the project root; paths are just examples -- this is a generic
+tool that accepts any single-table .hyper file):
+    python3 scripts/generate_metadata.py --source=<file>.hyper [options]
 
     --source is required -- there is no default .hyper file.
 
-    python3 generate_metadata.py --source=Finished_Merged.hyper
-        Profiles Finished_Merged.hyper and writes Finished_Merged.json (the
-        default --output: the --source path with its extension swapped from
-        .hyper to .json, so it's always obvious which metadata file goes
-        with which .hyper file). The datasource name is derived from the
-        filename (underscores -> spaces) unless --name overrides it; tags,
-        certification, and certification note default to none/false/empty
-        unless --tags/--certified/--certification-note are given.
+    python3 scripts/generate_metadata.py --source=data/Finished_Merged.hyper --output=data/datasource_metadata.json
+        Profiles data/Finished_Merged.hyper and writes the metadata JSON to
+        data/datasource_metadata.json (the filename committed in this repo).
+        If --output is omitted it defaults to the --source path with its
+        extension swapped from .hyper to .json (e.g. data/Finished_Merged.json),
+        so it's always obvious which metadata file goes with which .hyper file.
+        The datasource name is derived from the filename (underscores -> spaces)
+        unless --name overrides it; tags, certification, and certification note
+        default to none/false/empty unless --tags/--certified/--certification-note
+        are given.
 
-    python3 generate_metadata.py --source=Some_Other_Extract.hyper --output=some_other_metadata.json \\
+    python3 scripts/generate_metadata.py --source=data/Some_Other_Extract.hyper --output=data/some_other_metadata.json \\
         --name "Some Other Extract" --tags team-a,quarterly --certified --certification-note "Reviewed by BI team"
         Profiles a different file, writes to an explicitly chosen output
         path instead of the derived default, and sets every datasource-level
@@ -232,7 +235,7 @@ def main():
         raise SystemExit(
             "Missing required argument: --source (no .hyper file to inspect was specified).\n"
             f"Usage:   {SOURCE_USAGE}\n"
-            "Example: python3 generate_metadata.py --source=Finished_Merged.hyper"
+            "Example: python3 scripts/generate_metadata.py --source=data/Finished_Merged.hyper"
         )
     hyper_file = args.source
     if not os.path.exists(hyper_file):

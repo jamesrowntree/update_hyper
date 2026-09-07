@@ -15,8 +15,9 @@
     -- this script contributes no logic of its own beyond "find Python, check
     .env, run the script, forward its exit code."
 
-    Required environment variables (set in a `.env` file next to this script
-    -- see .env.example, which you copy to `.env` and fill in):
+    Required environment variables (set in a `.env` file in the project root --
+    the parent of this scripts/ folder -- see .env.example, which you copy to
+    `.env` and fill in):
 
       TABLEAU_SERVER_URL         Your Tableau Cloud pod URL, e.g.
                                   https://10ax.online.tableau.com
@@ -39,7 +40,7 @@
     holds a credential that can publish/overwrite content on your site.
 
     One-time setup this script does NOT do for you (run these yourself
-    first, from this same folder):
+    first, from the project root -- the parent of this scripts/ folder):
 
         python -m venv .venv
         .venv\Scripts\Activate.ps1
@@ -70,23 +71,27 @@
     Forwarded as --dry-run: print what would be published without making
     any network call to Tableau Cloud.
 
+    All examples are run from the project root (the parent of this scripts/
+    folder), so the wrapper is invoked as .\scripts\publish_to_tableau_cloud.ps1
+    and paths point into the data\ folder.
+
 .EXAMPLE
-    .\publish_to_tableau_cloud.ps1 -Source Finished_Merged.hyper
-    Publishes Finished_Merged.hyper as data source "Finished Merged"
+    .\scripts\publish_to_tableau_cloud.ps1 -Source data\Finished_Merged.hyper
+    Publishes data\Finished_Merged.hyper as data source "Finished Merged"
     (derived from the filename) with no metadata applied.
 
 .EXAMPLE
-    .\publish_to_tableau_cloud.ps1 -Source Finished_Merged.hyper -Target "Rugby Chains"
+    .\scripts\publish_to_tableau_cloud.ps1 -Source data\Finished_Merged.hyper -Target "Rugby Chains"
     Publishes the same file, but names the data source "Rugby Chains"
     instead of the derived default.
 
 .EXAMPLE
-    .\publish_to_tableau_cloud.ps1 -Source Finished_Merged.hyper -Metadata datasource_metadata.json -DryRun
+    .\scripts\publish_to_tableau_cloud.ps1 -Source data\Finished_Merged.hyper -Metadata data\datasource_metadata.json -DryRun
     Shows what would be published -- including metadata from
-    datasource_metadata.json -- without publishing anything.
+    data\datasource_metadata.json -- without publishing anything.
 
 .EXAMPLE
-    .\publish_to_tableau_cloud.ps1 -Source Some_Other_Extract.hyper -Metadata datasource_metadata.json
+    .\scripts\publish_to_tableau_cloud.ps1 -Source data\Some_Other_Extract.hyper -Metadata data\datasource_metadata.json
     Publishes a different .hyper file and applies the given metadata file to it.
 #>
 
@@ -107,10 +112,12 @@ param(
 # Stop on the first unhandled error instead of continuing with a half-broken run.
 $ErrorActionPreference = "Stop"
 
-# Run relative to this script's own folder, not whatever directory the
-# caller happened to be in -- publish_to_tableau_cloud.py, .env, and
-# datasource_metadata.json are all expected to live next to this script.
-Push-Location $PSScriptRoot
+# Run from the project root (the parent of this scripts/ folder), not whatever
+# directory the caller happened to be in. .venv, .env and requirements.txt live
+# in the project root; the Python script lives here in scripts/ alongside this
+# wrapper, and it reads its Tableau Cloud config from .env (found in the CWD).
+$ProjectRoot = Split-Path $PSScriptRoot -Parent
+Push-Location $ProjectRoot
 try {
     # Prefer the project's own virtualenv over whatever "python" happens to
     # be on PATH, so this always runs with the exact tableauhyperapi /
@@ -119,16 +126,16 @@ try {
     # interpreter under .venv\Scripts\, while one created on macOS/Linux
     # (e.g. if this same repo folder is shared from a Mac) puts it under
     # .venv/bin/ -- either can exist depending on where `python -m venv .venv`
-    # was originally run.
+    # was originally run. The venv lives in the project root, not scripts/.
     $venvCandidates = @(
-        (Join-Path $PSScriptRoot ".venv\Scripts\python.exe"),
-        (Join-Path $PSScriptRoot ".venv/bin/python3"),
-        (Join-Path $PSScriptRoot ".venv/bin/python")
+        (Join-Path $ProjectRoot ".venv\Scripts\python.exe"),
+        (Join-Path $ProjectRoot ".venv/bin/python3"),
+        (Join-Path $ProjectRoot ".venv/bin/python")
     )
     $python = $venvCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
     if (-not $python) {
-        Write-Warning ".venv not found next to this script -- falling back to whatever Python is on PATH. Dependencies (tableauhyperapi, tableauserverclient, python-dotenv) must already be installed there, e.g. via 'pip install -r requirements.txt'."
+        Write-Warning ".venv not found in the project root -- falling back to whatever Python is on PATH. Dependencies (tableauhyperapi, tableauserverclient, python-dotenv) must already be installed there, e.g. via 'pip install -r requirements.txt'."
         $onPath = Get-Command python -ErrorAction SilentlyContinue
         if (-not $onPath) { $onPath = Get-Command python3 -ErrorAction SilentlyContinue }
         if (-not $onPath) {
@@ -141,8 +148,8 @@ try {
     # any network call if they're missing -- this check just fails a little
     # faster, with a pointer to .env.example, instead of letting the Python
     # process start up first.
-    if (-not (Test-Path (Join-Path $PSScriptRoot ".env"))) {
-        throw "No .env file found next to this script. Copy .env.example to .env and fill in your Tableau Cloud details first (see this script's help: Get-Help .\publish_to_tableau_cloud.ps1 -Full)."
+    if (-not (Test-Path (Join-Path $ProjectRoot ".env"))) {
+        throw "No .env file found in the project root. Copy .env.example to .env and fill in your Tableau Cloud details first (see this script's help: Get-Help .\scripts\publish_to_tableau_cloud.ps1 -Full)."
     }
 
     # publish_to_tableau_cloud.py requires --source (no default, and it
@@ -150,13 +157,15 @@ try {
     # same message rather than relying on the Python process to catch it,
     # so a missing -Source is obvious without spawning python at all.
     if (-not $Source) {
-        throw "Missing required parameter: -Source <path-to-file>.hyper (forwarded as --source to publish_to_tableau_cloud.py). Example: .\publish_to_tableau_cloud.ps1 -Source Finished_Merged.hyper"
+        throw "Missing required parameter: -Source <path-to-file>.hyper (forwarded as --source to publish_to_tableau_cloud.py). Example: .\scripts\publish_to_tableau_cloud.ps1 -Source data\Finished_Merged.hyper"
     }
 
     # Build the argument list exactly as publish_to_tableau_cloud.py's own
     # argparse setup expects:
     #   publish_to_tableau_cloud.py --source=<file> [--target=<name>] [--metadata=<file>] [--dry-run]
-    $pyArgs = @("publish_to_tableau_cloud.py", "--source=$Source")
+    # The script itself lives in scripts/ (next to this wrapper), so it's
+    # referenced by absolute path even though the CWD is now the project root.
+    $pyArgs = @((Join-Path $PSScriptRoot "publish_to_tableau_cloud.py"), "--source=$Source")
     if ($Target) { $pyArgs += "--target=$Target" }
     if ($Metadata) { $pyArgs += "--metadata=$Metadata" }
     if ($DryRun) { $pyArgs += "--dry-run" }

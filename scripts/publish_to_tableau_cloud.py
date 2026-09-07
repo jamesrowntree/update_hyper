@@ -32,22 +32,22 @@ Usage:
     with a file that doesn't exist is an error (it means you asked for
     metadata to be applied but nothing can be read).
     
-    Examples:
+    Examples (run from the project root):
 
-    python3 publish_to_tableau_cloud.py --source=Finished_Merged.hyper
-        Publishes Finished_Merged.hyper as data source "Finished Merged"
+    python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper
+        Publishes data/Finished_Merged.hyper as data source "Finished Merged"
         (derived from the filename) with no metadata applied.
 
-    python3 publish_to_tableau_cloud.py --source=Finished_Merged.hyper --target="Rugby Chains"
+    python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper --target="Rugby Chains"
         Publishes the same file, but names the data source "Rugby Chains"
         instead of the derived default.
 
-    python3 publish_to_tableau_cloud.py --source=Finished_Merged.hyper --metadata=datasource_metadata.json
-        Publishes Finished_Merged.hyper and applies name, description, tags,
-        certification, and column descriptions from datasource_metadata.json
+    python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper --metadata=data/datasource_metadata.json
+        Publishes data/Finished_Merged.hyper and applies name, description, tags,
+        certification, and column descriptions from data/datasource_metadata.json
         (the file generate_metadata.py produces).
 
-    python3 publish_to_tableau_cloud.py --source=Finished_Merged.hyper --metadata=datasource_metadata.json --dry-run
+    python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper --metadata=data/datasource_metadata.json --dry-run
         Prints what would be published/updated -- target site and project,
         datasource name, description, certification, tags, and which column
         descriptions would be applied -- without making any network call to
@@ -367,13 +367,13 @@ def main():
         raise SystemExit(
             "Missing required argument: --source (no .hyper file to publish was specified).\n"
             f"Usage:   {SOURCE_USAGE}\n"
-            "Example: python3 publish_to_tableau_cloud.py --source=Finished_Merged.hyper"
+            "Example: python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper"
         )
     hyper_file = args.source
     config = load_config()
 
     if not os.path.exists(hyper_file):
-        raise SystemExit(f"{hyper_file} not found. Run split_by_year.py then union_hyper_files.py first.")
+        raise SystemExit(f"{hyper_file} not found. Run generate_split_by_year.py then union_hyper_files.py first.")
 
     target, target_origin = resolve_target(hyper_file, args.target)
 
