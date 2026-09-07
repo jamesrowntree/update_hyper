@@ -1,7 +1,7 @@
 """
 generate_updates.py
 
-Builds Updates.hyper -- the small data source that example_update_record.py
+Builds Updates.hyper -- the small data source that incremental_update.py
 reads its update payload from, instead of hardcoding the values in Python.
 
 Why a generator script? .hyper files are binary and there is no CSV-import
@@ -17,7 +17,7 @@ apply:
     "Chain Id"          -- the key, matches "Chain Id" in Finished_Merged.hyper
     "New Metres Gained" -- the absolute value to set "Metres Gained" to
 
-example_update_record.py attaches this file and applies every row in one
+incremental_update.py attaches this file and applies every row in one
 engine-side `UPDATE ... FROM` join, so the update values never cross into
 Python.
 
@@ -40,7 +40,7 @@ from tableauhyperapi import (
 
 # --- Configuration -----------------------------------------------------------
 # The file we produce and the table inside it. Unqualified here ("public".
-# "Updates") because this script owns the whole file; example_update_record.py
+# "Updates") because this script owns the whole file; incremental_update.py
 # attaches it under the "updates" alias when it reads it.
 UPDATES_FILE = "Updates.hyper"
 UPDATES_TABLE = TableName("public", "Updates")
@@ -59,10 +59,10 @@ UPDATES_TABLE_DEF = TableDefinition(
 )
 
 # --- The payload -------------------------------------------------------------
-# This is the data that used to be hardcoded inside example_update_record.py.
+# This is the data that used to be hardcoded inside incremental_update.py.
 # Each pair is [Chain Id, New Metres Gained]. These are real Chain Ids from
 # Finished_Merged.hyper (a Wallabies vs. England match on 2021-07-11), so the
-# before/after in example_update_record.py is concrete and verifiable. To change
+# before/after in incremental_update.py is concrete and verifiable. To change
 # which rows get updated, edit this list and re-run -- no other code changes.
 UPDATE_ROWS = [
     ["110023590_001", 25],   # was 10

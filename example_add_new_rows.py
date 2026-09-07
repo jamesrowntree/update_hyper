@@ -2,7 +2,7 @@
 example_add_new_rows.py
 
 Answers: "can you incrementally update an existing Hyper extract?" -- yes,
-this is the other half (see also example_update_record.py). This
+this is the other half (see also incremental_update.py). This
 demonstrates appending brand-new rows into an EXISTING table with
 Inserter, instead of rebuilding the whole file the way union_hyper_files.py
 does (attach_database + CREATE TABLE ... AS SELECT ... UNION ALL over every

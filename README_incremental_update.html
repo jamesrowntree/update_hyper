@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Incremental update from a .hyper payload file</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1c1e21;
+    --muted: #5b6270;
+    --accent: #1a73c7;
+    --code-bg: #f4f6f8;
+    --border: #e1e4e8;
+    --good: #1a7f37;
+    --warn: #9a6700;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 5rem;
+    line-height: 1.6;
+    color: var(--fg);
+    background: var(--bg);
+  }
+  h1 { font-size: 2rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.4rem; margin-top: 2.75rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
+  h3 { font-size: 1.1rem; margin-top: 1.75rem; }
+  .subtitle { color: var(--muted); font-size: 1.05rem; margin-top: 0; }
+  code {
+    background: var(--code-bg);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    font-size: 0.92em;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.92rem; }
+  th, td { border: 1px solid var(--border); padding: 0.45rem 0.7rem; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: #f0f7ff;
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    margin: 1rem 0;
+  }
+  .callout.good { border-left-color: var(--good); background: #eefbf1; }
+  footer { margin-top: 4rem; color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+</style>
+</head>
+<body>
+
+<h1>Incremental update from a <code>.hyper</code> payload file</h1>
+<p class="subtitle">A standalone example: incrementally update an existing Tableau <code>.hyper</code> extract with data from a separate <code>.hyper</code> data source.</p>
+
+<div class="callout">
+  This is a self-contained sub-example of the <code>update_hyper</code> project. It has no dependency on the split/union/publish pipeline beyond needing an existing extract (<code>Finished_Merged.hyper</code>) to update. See the main <a href="README.md">README.md</a> / <a href="readme.html">readme.html</a> for the wider project.
+</div>
+
+<h2>What it demonstrates</h2>
+<p>
+  <strong>Can you update an existing Hyper extract in place, without rebuilding it?</strong>
+  Yes &mdash; here the new payload lives in its own <code>Updates.hyper</code> file; the update
+  script attaches both that new file and the existing extract, and applies the update with a
+  single SQL <code>UPDATE ... FROM</code>, executed inside Hyper's engine.
+</p>
+<p>
+  This mirrors the &ldquo;keep the data in the engine&rdquo; approach the rest of the project uses
+  (<code>union_hyper_files.py</code>, <code>split_by_year.py</code>): attach files under aliases,
+  then run one <code>execute_command</code>.
+</p>
+
+<h2>Files</h2>
+<table>
+  <thead>
+    <tr><th>File</th><th>Role</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>generate_updates.py</code></td>
+      <td>Creates <code>Updates.hyper</code> from a Python list of <code>[Chain Id, New Metres Gained]</code> rows. Run once (or whenever you change the payload).</td>
+    </tr>
+    <tr>
+      <td><code>Updates.hyper</code></td>
+      <td>The externalised payload: one table <code>"public"."Updates"</code> with columns <code>Chain Id</code> (TEXT) and <code>New Metres Gained</code> (BIG_INT), one row per update. Committed, but fully regenerable.</td>
+    </tr>
+    <tr>
+      <td><code>incremental_update.py</code></td>
+      <td>Copies <code>Finished_Merged.hyper</code> &rarr; <code>Example_Update.hyper</code>, attaches both the copy and <code>Updates.hyper</code>, and applies every update in one <code>UPDATE ... FROM</code>.</td>
+    </tr>
+    <tr>
+      <td><code>Example_Update.hyper</code></td>
+      <td>The disposable output &mdash; a copy of the extract with the updates applied. Regenerated every run; never the real extract.</td>
+    </tr>
+  </tbody>
+</table>
+<p>Inputs it reads but never modifies: <code>Finished_Merged.hyper</code> (the extract to update from).</p>
+
+<h2>Requirements</h2>
+<p>The project virtualenv with <code>tableauhyperapi</code> installed (see the main <code>README.md</code> &sect;3 for setup):</p>
+<pre><code>source .venv/bin/activate</code></pre>
+
+<h2>Running it</h2>
+<pre><code>python3 generate_updates.py        # Optional. To (re)create Updates.hyper
+python3 incremental_update.py      # apply the payload to a disposable copy</code></pre>
+
+<p>Expected output:</p>
+<pre><code>Wrote 5 update row(s) to Updates.hyper (table "public"."Updates").
+
+Copied Finished_Merged.hyper -&gt; Example_Update.hyper (only the copy will be modified)
+--- Applying updates from Updates.hyper ---
+Before (5 row(s)):
+    ['110023590_001', 110023590, 'Wallabies', 'England', Date(2021, 7, 11), 10]
+    ['110023590_002', 110023590, 'Wallabies', 'England', Date(2021, 7, 11), 4]
+    ...
+UPDATE affected 5 row(s) (expected: 5, one per row in Updates.hyper)
+After (5 row(s)):
+    ['110023590_001', 110023590, 'Wallabies', 'England', Date(2021, 7, 11), 25]
+    ['110023590_002', 110023590, 'Wallabies', 'England', Date(2021, 7, 11), 15]
+    ...
+Done. Only Example_Update.hyper was modified ...</code></pre>
+
+<h2>How it works</h2>
+<ol>
+  <li><strong><code>generate_updates.py</code></strong> opens <code>Updates.hyper</code> with <code>CreateMode.CREATE_AND_REPLACE</code> (fresh every run), creates the <code>"public"."Updates"</code> table from an explicit <code>TableDefinition</code>, and bulk-inserts the <code>UPDATE_ROWS</code> list with an <code>Inserter</code>.</li>
+  <li><strong><code>incremental_update.py</code></strong> copies the extract to a throwaway file, then opens a single Hyper connection and attaches <strong>both</strong> files under aliases &mdash; <code>target</code> (the copy) and <code>updates</code> (the payload) &mdash; so one SQL engine sees both, addressable as <code>"alias"."schema"."table"</code>.</li>
+  <li>It applies everything in one statement:
+    <pre><code>UPDATE "target"."public"."Extract" AS e
+SET "Metres Gained" = u."New Metres Gained"
+FROM "updates"."public"."Updates" AS u
+WHERE e."Chain Id" = u."Chain Id"</code></pre>
+    Because both tables are attached into the same engine, the join and the writes happen natively inside Hyper &mdash; the Python layer only issues the command string.
+  </li>
+</ol>
+
+<h3>Why attach <em>both</em> files (rather than open the copy directly)?</h3>
+<p>
+  Only because we're using Hyper for our source file.
+  Opening a connection directly against one <code>.hyper</code> file and then attaching a second
+  changes how the unqualified <code>"public"."Extract"</code> name resolves, and the update fails
+  with <code>schema "public" does not exist</code>. Attaching <em>both</em> under explicit aliases
+  and using fully-qualified three-part names avoids the ambiguity &mdash; and matches how
+  <code>union_hyper_files.py</code> and <code>split_by_year.py</code> already work.
+</p>
+
+<h2>Customising the update</h2>
+<p>Editing <em>which</em> rows change is a <strong>data-only</strong> change &mdash; no code edits:</p>
+<ol>
+  <li>Edit the <code>UPDATE_ROWS</code> list in <code>generate_updates.py</code>. The Chain Ids must be real keys present in the extract.</li>
+  <li>Re-run <code>python3 generate_updates.py</code>, then <code>python3 incremental_update.py</code>.</li>
+</ol>
+<p>If a <code>Chain Id</code> in the payload matches no row in the extract, the update simply affects fewer rows and the script prints a one-line <code>WARNING</code> naming the shortfall &mdash; it does not fail.</p>
+
+<h2>Safety</h2>
+<div class="callout good">
+  <code>Finished_Merged.hyper</code> (and the live Tableau Cloud data source it backs) is never touched. Every run works on a fresh <code>Example_Update.hyper</code> copy, so both scripts are safe to re-run any number of times.
+</div>
+
+<footer>
+  Part of the <code>update_hyper</code> project. See <code>README_incremental_update.md</code> for the Markdown version of this page.
+</footer>
+
+</body>
+</html>

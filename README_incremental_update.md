@@ -1,8 +1,7 @@
 # Incremental update from a `.hyper` payload file
 
 *A standalone example: incrementally update an existing Tableau `.hyper` extract
-in place, driving the change from a separate `.hyper` data source instead of
-hardcoding values in Python.*
+with data from a separate `.hyper` data source.*
 
 > This is a self-contained sub-example of the `update_hyper` project. It has no
 > dependency on the split/union/publish pipeline beyond needing an existing
@@ -12,11 +11,10 @@ hardcoding values in Python.*
 ## What it demonstrates
 
 **Can you update an existing Hyper extract in place, without rebuilding it?**
-Yes — and the values you apply don't have to live in your code. Here the update
-payload lives in its own `Updates.hyper` file; the update script attaches that
-file alongside the extract and applies every change with a single SQL
-`UPDATE ... FROM`, executed entirely inside Hyper's engine. No row or value ever
-crosses into Python.
+Yes — 
+Here the new payload lives in its own `Updates.hyper` file; the update script attaches 
+both that new file and the existing extract, and applies the update with a single SQL
+`UPDATE ... FROM`, executed inside Hyper's engine.
 
 This mirrors the "keep the data in the engine" approach the rest of the project
 uses (`union_hyper_files.py`, `split_by_year.py`): attach files under aliases,
@@ -28,7 +26,7 @@ then run one `execute_command`.
 |------|------|
 | `generate_updates.py` | Creates `Updates.hyper` from a Python list of `[Chain Id, New Metres Gained]` rows. Run once (or whenever you change the payload). |
 | `Updates.hyper` | The externalised payload: one table `"public"."Updates"` with columns `Chain Id` (TEXT) and `New Metres Gained` (BIG_INT), one row per update. Committed, but fully regenerable. |
-| `example_update_record.py` | Copies `Finished_Merged.hyper` → `Example_Update.hyper`, attaches both the copy and `Updates.hyper`, and applies every update in one `UPDATE ... FROM`. |
+| `incremental_update.py` | Copies `Finished_Merged.hyper` → `Example_Update.hyper`, attaches both the copy and `Updates.hyper`, and applies every update in one `UPDATE ... FROM`. |
 | `Example_Update.hyper` | The disposable output — a copy of the extract with the updates applied. Regenerated every run; never the real extract. |
 
 Inputs it reads but never modifies: `Finished_Merged.hyper` (the extract to
@@ -46,8 +44,8 @@ source .venv/bin/activate
 ## Running it
 
 ```
-python3 generate_updates.py        # once, to (re)create Updates.hyper
-python3 example_update_record.py   # apply the payload to a disposable copy
+python3 generate_updates.py        # Optional. To (re)create Updates.hyper
+python3 incremental_update.py   # apply the payload to a disposable copy
 ```
 
 Expected output:
@@ -74,7 +72,7 @@ Done. Only Example_Update.hyper was modified ...
 1. **`generate_updates.py`** opens `Updates.hyper` with `CreateMode.CREATE_AND_REPLACE`
    (fresh every run), creates the `"public"."Updates"` table from an explicit
    `TableDefinition`, and bulk-inserts the `UPDATE_ROWS` list with an `Inserter`.
-2. **`example_update_record.py`** copies the extract to a throwaway file, then opens
+2. **`incremental_update.py`** copies the extract to a throwaway file, then opens
    a single Hyper connection and attaches **both** files under aliases —
    `target` (the copy) and `updates` (the payload) — so one SQL engine sees both,
    addressable as `"alias"."schema"."table"`.
@@ -92,6 +90,7 @@ Done. Only Example_Update.hyper was modified ...
 
 ### Why attach *both* files (rather than open the copy directly)?
 
+Only because we're using Hyper for our source file.
 Opening a connection directly against one `.hyper` file and then attaching a
 second changes how the unqualified `"public"."Extract"` name resolves, and the
 update fails with `schema "public" does not exist`. Attaching *both* under
@@ -104,7 +103,7 @@ Editing *which* rows change is a **data-only** change — no code edits:
 
 1. Edit the `UPDATE_ROWS` list in `generate_updates.py`. The Chain Ids must be
    real keys present in the extract.
-2. Re-run `python3 generate_updates.py`, then `python3 example_update_record.py`.
+2. Re-run `python3 generate_updates.py`, then `python3 incremental_update.py`.
 
 If a `Chain Id` in the payload matches no row in the extract, the update simply
 affects fewer rows and the script prints a one-line `WARNING` naming the

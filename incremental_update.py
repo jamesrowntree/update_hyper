@@ -1,5 +1,5 @@
 """
-example_update_record.py
+incremental_update.py
 
 Answers the question: "can you incrementally update an existing Hyper extract?" -- yes.
 This demonstrates changing one measure in place on existing rows with a plain
@@ -28,7 +28,7 @@ never disturbs the file that's actually published to Tableau Cloud.
 
 Usage:
     python3 generate_updates.py        # once, to create Updates.hyper
-    python3 example_update_record.py
+    python3 incremental_update.py
 """
 
 import os
@@ -80,7 +80,7 @@ def main():
     shutil.copyfile(SOURCE_FILE, EXAMPLE_FILE)
     print(f"Copied {SOURCE_FILE} -> {EXAMPLE_FILE} (only the copy will be modified)")
 
-    with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "exampleupdate") as hyper:
+    with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "incrementalupdate") as hyper:
         # 3. Open a bare connection and attach both files under their own alias, so
         #    a single SQL engine sees both. attach_database uses CreateMode.NONE:
         #    the files are opened as-is, NOT recreated or wiped. The target
