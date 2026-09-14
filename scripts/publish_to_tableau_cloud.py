@@ -257,6 +257,12 @@ def setup_logging(silent):
         console_handler.setFormatter(logging.Formatter("%(message)s"))
         logger.addHandler(console_handler)
 
+    # Name the script at the very top of every log (and console) so a log file
+    # is unmistakably attributable: logs/ also holds update_*.log from
+    # update_cloud_hyper_data.py, and this header -- plus the publish_/update_
+    # filename prefix -- keeps the two apart at a glance.
+    logger.info("Script: %s", os.path.basename(__file__))
+
     return log_path
 
 
