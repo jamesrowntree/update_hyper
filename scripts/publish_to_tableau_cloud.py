@@ -22,11 +22,19 @@ your real values, and this script loads it automatically via python-dotenv.
 Never commit .env, paste its contents into chat, or share it: it holds a
 Tableau Personal Access Token that can publish/overwrite content on your site.
 
+Every run -- silent or not, dry-run or not -- writes a full, timestamped
+record to a per-run log file under logs/ (e.g. logs/publish_20260914-093015.log).
+The log always captures everything; --silent only silences the console.
+
 Usage:
-    python3 publish_to_tableau_cloud.py --source=<file>.hyper [--target=<name>] [--metadata=<file>.json] [--dry-run]
+    python3 publish_to_tableau_cloud.py --source=<file>.hyper [--target=<name>] [--metadata=<file>.json] [--dry-run] [--silent]
 
     --source is required -- there is no default .hyper file. Omitting it is
     an error that prints this exact usage line.
+
+    --silent (-s) suppresses all stdout output. The run still writes its
+    complete, timestamped log file under logs/ -- nothing is lost, the console
+    is just quiet. Useful for cron/scheduled runs.
 
     --target is optional -- it's the name the data source will have on
     Tableau Cloud. If omitted, it defaults to the --source filename with
@@ -61,14 +69,77 @@ Usage:
 """
 
 import argparse
+import functools
 import io
 import json
+import logging
 import os
+import sys
 import xml.etree.ElementTree as ET
 import zipfile
+from datetime import datetime
 
 import tableauserverclient as TSC
 from dotenv import find_dotenv, load_dotenv
+
+# All human-readable output goes through this logger, never print(), so the
+# same messages can be sent to a timestamped log file (always) and to stdout
+# (unless --silent). See setup_logging().
+logger = logging.getLogger("publish_to_tableau_cloud")
+
+
+class section:
+    """
+    Section marker
+    --------------
+    Names a block of work as a "section" so the log tells you, at every step,
+    which stage of the publish is running and -- if something breaks -- exactly
+    which stage broke. Usable two ways, with identical behaviour:
+
+        @section("inject calculations")        # decorate a whole function
+        def _inject_calculations(...): ...
+
+        with section("publish new data source"):   # wrap an inline block
+            ...
+
+    On entry it logs "Section: <name>" (DEBUG, so the log file records the
+    order sections actually ran in without cluttering the console). If the
+    block raises an *unexpected* exception, it logs
+    "Error in section '<name>': ..." naming the section that failed, then lets
+    the exception propagate. SystemExit (our usage/validation errors) is
+    deliberately left alone so those still flow to main() and print their own
+    guidance untouched.
+
+    Each section name matches the header on the first line of the decorated
+    function's docstring. The raised exception is tagged so only the innermost
+    section reports it -- outer sections it passes through on the way up stay
+    quiet rather than logging the same failure again.
+    """
+
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        logger.debug("Section: %s", self.name)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        # Only annotate ordinary errors; SystemExit/KeyboardInterrupt are not
+        # Exception subclasses, so they pass through unlogged here.
+        if isinstance(exc, Exception) and not getattr(exc, "_section_logged", False):
+            logger.error("Error in section %r: %s", self.name, exc)
+            try:
+                exc._section_logged = True
+            except Exception:
+                pass  # a few exception types forbid attribute assignment
+        return False  # never suppress the exception
+
+    def __call__(self, func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with section(self.name):
+                return func(*args, **kwargs)
+        return wrapper
 
 TABLEAU_USER_NS = "http://www.tableausoftware.com/xml/user"
 ET.register_namespace("user", TABLEAU_USER_NS)
@@ -137,10 +208,66 @@ def parse_args():
             "call to Tableau Cloud."
         ),
     )
+    parser.add_argument(
+        "-s",
+        "--s",
+        "--silent",
+        dest="silent",
+        action="store_true",
+        help=(
+            "Suppress all stdout output. The run still writes a full, "
+            "timestamped record to a log file under logs/ -- --silent only "
+            "silences the console, never the log."
+        ),
+    )
     return parser.parse_args()
 
 
+def setup_logging(silent):
+    """
+    Wire up logging so every run leaves a full, timestamped trail on disk,
+    regardless of --silent or --dry-run.
+
+    A file handler (DEBUG) writes everything -- including the fine-grained
+    steps that never reached the console -- to a fresh per-run file under
+    logs/. A stdout handler (INFO, message-only to match the previous
+    print() output) is added ONLY when not silent, so --silent leaves the
+    console completely quiet while losing nothing from the log.
+
+    Returns the path of the log file created for this run.
+    """
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    log_dir = os.path.join(project_root, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"publish_{datetime.now():%Y%m%d-%H%M%S}.log")
+
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()  # idempotent if ever called more than once
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    )
+    logger.addHandler(file_handler)
+
+    if not silent:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(console_handler)
+
+    return log_path
+
+
+@section("load configuration")
 def load_config():
+    """
+    load configuration
+    -------------------
+    Read the Tableau connection settings from environment variables (populated
+    from .env), failing early with a fix-it message if any are missing.
+    """
     # Found explicitly (rather than leaving load_dotenv() to look it up
     # internally) so the missing-var error below can tell you exactly
     # whether a .env was found at all, or found but incomplete -- the two
@@ -175,8 +302,11 @@ def load_config():
     }
 
 
+@section("resolve target name")
 def resolve_target(hyper_file, target_arg):
     """
+    resolve target name
+    --------------------
     The data source's name on Tableau Cloud: --target if given, otherwise
     derived from --source itself (extension stripped, underscores -> spaces)
     so there's always a sensible name without a hardcoded default tied to
@@ -188,7 +318,14 @@ def resolve_target(hyper_file, target_arg):
     return derived, "derived from --source (no --target given)"
 
 
+@section("load metadata")
 def load_metadata(metadata_file):
+    """
+    load metadata
+    -------------
+    Read and parse the metadata JSON file (--metadata) that supplies the
+    name, description, tags, certification, column descriptions and calcs.
+    """
     if not os.path.exists(metadata_file):
         raise SystemExit(
             f"Metadata file {metadata_file!r} not found, but --metadata asked for it "
@@ -201,9 +338,17 @@ def load_metadata(metadata_file):
         return json.load(f)
 
 
+@section("find project")
 def find_project(server, project_name):
+    """
+    find project
+    ------------
+    Locate the Cloud project (by TABLEAU_PROJECT_NAME) the data source will
+    live in; the project must already exist.
+    """
     for project in TSC.Pager(server.projects):
         if project.name == project_name:
+            logger.debug("Found project %r (id %s)", project_name, project.id)
             return project
     raise SystemExit(
         f"Project {project_name!r} not found on this site. "
@@ -211,8 +356,11 @@ def find_project(server, project_name):
     )
 
 
+@section("find data source")
 def find_datasource(server, project, name):
     """
+    find data source
+    ----------------
     Return the DatasourceItem named `name` in `project`, or None if no such
     published data source exists yet. None means the bootstrap case (publish
     the bare .hyper); a match means the preserve case (edit the model in place).
@@ -233,8 +381,11 @@ def _set_column_desc(column_element, text):
     run.text = text
 
 
+@section("patch column descriptions")
 def _patch_tds_column_descriptions(tds_bytes, columns_metadata):
     """
+    patch column descriptions
+    --------------------------
     Adds/updates a <desc> on the .tds's top-level <column> element for each
     field named in columns_metadata, creating the <column> element itself
     when the field doesn't have one yet (true for any field that was never
@@ -282,8 +433,11 @@ def _patch_tds_column_descriptions(tds_bytes, columns_metadata):
     return ET.tostring(root, encoding="utf-8", xml_declaration=True), updated, created
 
 
+@section("inject calculations")
 def _inject_calculations(tds_bytes, calculations):
     """
+    inject calculations
+    --------------------
     Adds (or updates) a calculated field on the .tds for each entry in
     `calculations`, as a top-level <column> carrying a
     <calculation class='tableau' formula='...'/> child -- the exact shape
@@ -344,8 +498,11 @@ def _inject_calculations(tds_bytes, calculations):
     return ET.tostring(root, encoding="utf-8", xml_declaration=True), added, updated
 
 
+@section("patch model")
 def _patch_tds(tds_bytes, columns_metadata, calculations):
     """
+    patch model
+    -----------
     Apply column descriptions, then inject/update calculated fields, on the
     .tds XML. Returns (new_tds_bytes, summary) where summary holds the four
     counts (descriptions updated/created, calculations added/updated).
@@ -368,35 +525,51 @@ def _summary_line(summary):
     )
 
 
+@section("download data source")
 def _download_tdsx_bytes(server, datasource_item):
     """
+    download data source
+    ---------------------
     Download a published data source as a .tdsx and return its raw bytes.
     download() appends its own extension, so the real path is its return
     value; the temp file is always cleaned up.
     """
     tdsx_path = None
     try:
+        logger.debug("Downloading current .tdsx for data source id %s...", datasource_item.id)
         tdsx_path = server.datasources.download(
             datasource_item.id, filepath=f"{datasource_item.id}.download", include_extract=True
         )
         with open(tdsx_path, "rb") as f:
-            return f.read()
+            data = f.read()
+        logger.debug("Downloaded .tdsx (%d bytes)", len(data))
+        return data
     finally:
         if tdsx_path and os.path.exists(tdsx_path):
             os.remove(tdsx_path)
 
 
+@section("read tds from tdsx")
 def _read_tds_from_tdsx(tdsx_bytes):
-    """Return (tds_member_name, tds_bytes) for the .tds inside a .tdsx zip."""
+    """
+    read tds from tdsx
+    ------------------
+    Return (tds_member_name, tds_bytes) for the .tds inside a .tdsx zip.
+    """
     with zipfile.ZipFile(io.BytesIO(tdsx_bytes)) as zf:
         tds_names = [n for n in zf.namelist() if n.endswith(".tds")]
         if not tds_names:
             raise ValueError("no .tds file found inside the downloaded .tdsx")
-        return tds_names[0], zf.read(tds_names[0])
+        tds_bytes = zf.read(tds_names[0])
+        logger.debug("Read .tds member %r (%d bytes) from .tdsx", tds_names[0], len(tds_bytes))
+        return tds_names[0], tds_bytes
 
 
+@section("rebuild tdsx")
 def _rebuild_tdsx(original_tdsx_bytes, tds_member, new_tds_bytes, new_hyper_bytes=None):
     """
+    rebuild tdsx
+    ------------
     Copy every member of the original .tdsx verbatim, replacing the .tds with
     `new_tds_bytes` and -- if `new_hyper_bytes` is given -- the embedded .hyper
     extract with it. The extract keeps its original member path so the .tds
@@ -416,21 +589,31 @@ def _rebuild_tdsx(original_tdsx_bytes, tds_member, new_tds_bytes, new_hyper_byte
     return out
 
 
+@section("apply tags")
 def _apply_tags(server, datasource_item, ds_meta):
+    """
+    apply tags
+    ----------
+    Push the metadata's tags onto the published data source (a separate
+    /tags API call -- tags are not part of the publish payload).
+    """
     tags = set(ds_meta.get("tags", []))
     if tags:
         datasource_item.tags = tags
         server.datasources.update_tags(datasource_item)
-        print(f"Applied tags: {sorted(tags)}")
+        logger.info("Applied tags: %s", sorted(tags))
 
 
 def _print_published(config, published):
-    print(f"Published. Data source ID: {published.id}")
-    print(f"URL: {config['server_url']}/#/site/{config['site_content_url']}/datasources/{published.id}")
+    logger.info("Published. Data source ID: %s", published.id)
+    logger.info("URL: %s/#/site/%s/datasources/%s", config["server_url"], config["site_content_url"], published.id)
 
 
+@section("publish preserving model")
 def publish_preserving_model(server, existing_item, hyper_file, columns_metadata, calculations):
     """
+    publish preserving model
+    -------------------------
     Refresh an existing data source's data WITHOUT discarding its model.
 
     Downloads the data source's current .tdsx, patches the embedded .tds
@@ -449,17 +632,23 @@ def publish_preserving_model(server, existing_item, hyper_file, columns_metadata
     tdsx_bytes = _download_tdsx_bytes(server, existing_item)
     tds_member, tds_bytes = _read_tds_from_tdsx(tdsx_bytes)
     new_tds_bytes, summary = _patch_tds(tds_bytes, columns_metadata, calculations)
+    logger.debug("Patched .tds in place: %s", summary)
 
     with open(hyper_file, "rb") as f:
         fresh_hyper = f.read()
+    logger.debug("Read fresh extract %s (%d bytes) to swap in", hyper_file, len(fresh_hyper))
 
     rebuilt = _rebuild_tdsx(tdsx_bytes, tds_member, new_tds_bytes, new_hyper_bytes=fresh_hyper)
+    logger.debug("Republishing rebuilt .tdsx with Overwrite...")
     published = server.datasources.publish(existing_item, rebuilt, TSC.Server.PublishMode.Overwrite)
     return published, summary
 
 
+@section("apply model metadata after publish")
 def apply_model_metadata_after_publish(server, datasource_item, columns_metadata, calculations):
     """
+    apply model metadata after publish
+    -----------------------------------
     Bootstrap case only: a brand-new data source was just published from the
     bare .hyper (which generates a fresh model), so there is nothing to
     preserve. Download that just-published .tdsx, patch its .tds with column
@@ -475,25 +664,28 @@ def apply_model_metadata_after_publish(server, datasource_item, columns_metadata
         tdsx_bytes = _download_tdsx_bytes(server, datasource_item)
         tds_member, tds_bytes = _read_tds_from_tdsx(tdsx_bytes)
     except Exception as e:
-        print(f"Skipping column descriptions/calculations -- could not read the published datasource: {e}")
+        logger.warning("Skipping column descriptions/calculations -- could not read the published datasource: %s", e)
         return
 
     new_tds_bytes, summary = _patch_tds(tds_bytes, columns_metadata, calculations)
     if not any(summary.values()):
-        print("Skipping republish -- nothing in the metadata matched the model.")
+        logger.info("Skipping republish -- nothing in the metadata matched the model.")
         return
 
     rebuilt = _rebuild_tdsx(tdsx_bytes, tds_member, new_tds_bytes)
     try:
         server.datasources.publish(datasource_item, rebuilt, TSC.Server.PublishMode.Overwrite)
     except Exception as e:
-        print(f"Could not republish with model metadata: {e}")
+        logger.warning("Could not republish with model metadata: %s", e)
         return
-    print(_summary_line(summary))
+    logger.info(_summary_line(summary))
 
 
+@section("dry-run report")
 def print_dry_run(config, hyper_file, target, target_origin, ds_meta, columns_metadata, calculations, skip_metadata):
     """
+    dry-run report
+    --------------
     Reports the same plan main() would otherwise execute, derived entirely
     from local config/metadata -- no TSC.Server is constructed, so this
     makes zero network calls (even TSC.Server(..., use_server_version=True)
@@ -502,49 +694,56 @@ def print_dry_run(config, hyper_file, target, target_origin, ds_meta, columns_me
     block). Because it makes no network call, it can't know whether the data
     source already exists -- it reports what would be applied either way.
     """
-    print("-- DRY RUN: no network call will be made, nothing will be published --")
-    print(f"Target site: {config['server_url']}  site={config['site_content_url']!r}  project={config['project_name']!r}")
-    print(f"Would publish {hyper_file!r} as data source {target!r} ({target_origin}) (PublishMode.Overwrite):")
-    print(
+    logger.info("-- DRY RUN: no network call will be made, nothing will be published --")
+    logger.info(f"Target site: {config['server_url']}  site={config['site_content_url']!r}  project={config['project_name']!r}")
+    logger.info(f"Would publish {hyper_file!r} as data source {target!r} ({target_origin}) (PublishMode.Overwrite):")
+    logger.info(
         "  model: if the data source already exists, its current .tds is edited in "
         "place (existing calculated fields, folders and aliases preserved) and only "
         "the extract data is swapped; if it's new, it's bootstrapped from the .hyper."
     )
 
     if skip_metadata:
-        print("  metadata: none applied (no --metadata given) -- no description, certification, tags, column descriptions, or calculations")
+        logger.info("  metadata: none applied (no --metadata given) -- no description, certification, tags, column descriptions, or calculations")
         return
 
-    print(f"  description: {ds_meta.get('description') or '(none)'}")
+    logger.info(f"  description: {ds_meta.get('description') or '(none)'}")
     certified = bool(ds_meta.get("certified", False))
     note = f" -- {ds_meta['certification_note']}" if ds_meta.get("certification_note") else ""
-    print(f"  certified: {certified}{note}")
+    logger.info(f"  certified: {certified}{note}")
     tags = sorted(set(ds_meta.get("tags", [])))
-    print(f"  tags: {tags if tags else '(none)'}")
+    logger.info(f"  tags: {tags if tags else '(none)'}")
 
     describable = [
         col for col in columns_metadata
         if (col.get("description") or "").strip()
         and col["description"].strip() != "No description available."
     ]
-    print(
+    logger.info(
         f"  column descriptions: {len(describable)} of {len(columns_metadata)} "
         "column(s) would be applied (via a download/patch/republish of the .tds)"
     )
     for col in describable:
-        print(f"    {col['name']!r}: {col['description']}")
+        logger.info(f"    {col['name']!r}: {col['description']}")
 
     if calculations:
-        print(f"  calculated fields: {len(calculations)} would be added or updated on the model:")
+        logger.info(f"  calculated fields: {len(calculations)} would be added or updated on the model:")
         for calc in calculations:
-            print(f"    {calc['name']!r} = {calc['formula']}")
+            logger.info(f"    {calc['name']!r} = {calc['formula']}")
     else:
-        print("  calculated fields: none in metadata (any already on the data source are preserved)")
+        logger.info("  calculated fields: none in metadata (any already on the data source are preserved)")
 
 
-def main():
-    args = parse_args()
-
+@section("run")
+def _run(args):
+    """
+    run
+    ---
+    Top-level orchestration: validate args, load config/metadata, then either
+    print the dry-run plan or sign in and publish. Each step below is its own
+    named section, so the log names whichever one is running (and whichever
+    one fails).
+    """
     if not args.source:
         raise SystemExit(
             "Missing required argument: --source (no .hyper file to publish was specified).\n"
@@ -578,68 +777,111 @@ def main():
     )
     server = TSC.Server(config["server_url"], use_server_version=True)
 
-    with server.auth.sign_in(tableau_auth):
+    # sign in
+    # -------
+    logger.debug("Signing in to %s (site %r)...", config["server_url"], config["site_content_url"])
+    with section("sign in"), server.auth.sign_in(tableau_auth):
+        logger.debug("Signed in; server API version %s", server.version)
         project = find_project(server, config["project_name"])
         existing = find_datasource(server, project, target)
+        logger.debug(
+            "Data source %r %s in project %r",
+            target,
+            "already exists (preserve path)" if existing else "does not exist yet (bootstrap path)",
+            config["project_name"],
+        )
 
         if existing is None:
-            # Bootstrap: no data source by this name yet, so there's no model to
-            # preserve. Publish the bare .hyper (Tableau generates a fresh model),
-            # then patch descriptions/calculations onto it.
+            # publish new data source (bootstrap)
+            # -----------------------------------
+            # No data source by this name yet, so there's no model to preserve.
+            # Publish the bare .hyper (Tableau generates a fresh model), then
+            # patch descriptions/calculations onto it.
             #
             # Name, description, and certification must be set on the DatasourceItem
             # BEFORE publish(): the update-after-publish request does not include
             # description at all (verified against tableauserverclient's request
             # builder), so setting it after the fact would silently do nothing.
-            new_datasource = TSC.DatasourceItem(project_id=project.id, name=target)
-            new_datasource.description = ds_meta.get("description")
-            new_datasource.certified = bool(ds_meta.get("certified", False))
-            if ds_meta.get("certification_note"):
-                new_datasource.certification_note = ds_meta["certification_note"]
+            with section("publish new data source"):
+                new_datasource = TSC.DatasourceItem(project_id=project.id, name=target)
+                new_datasource.description = ds_meta.get("description")
+                new_datasource.certified = bool(ds_meta.get("certified", False))
+                if ds_meta.get("certification_note"):
+                    new_datasource.certification_note = ds_meta["certification_note"]
 
-            print(
-                f"Publishing {hyper_file} to project {config['project_name']!r} "
-                f"as {target!r} ({target_origin}) [new data source]..."
-            )
-            published_ds = server.datasources.publish(
-                new_datasource, hyper_file, TSC.Server.PublishMode.Overwrite
-            )
-            _print_published(config, published_ds)
+                logger.info(
+                    "Publishing %s to project %r as %r (%s) [new data source]...",
+                    hyper_file, config["project_name"], target, target_origin,
+                )
+                published_ds = server.datasources.publish(
+                    new_datasource, hyper_file, TSC.Server.PublishMode.Overwrite
+                )
+                _print_published(config, published_ds)
 
             if not args.metadata:
-                print("No --metadata given: no description, certification, tags, column descriptions, or calculations applied.")
+                logger.info("No --metadata given: no description, certification, tags, column descriptions, or calculations applied.")
             else:
                 # Tags are NOT part of the publish payload -- they require a
                 # separate call against the /tags endpoint.
                 _apply_tags(server, published_ds, ds_meta)
                 apply_model_metadata_after_publish(server, published_ds, columns_metadata, calculations)
         else:
-            # Preserve: the data source already exists, so keep its model
-            # (including any calculated fields authored in Tableau) and only
-            # refresh its extract, editing the .tds in place. get_by_id gives a
+            # refresh existing data source (preserve model)
+            # ---------------------------------------------
+            # The data source already exists, so keep its model (including any
+            # calculated fields authored in Tableau) and only refresh its
+            # extract, editing the .tds in place. get_by_id gives a
             # fully-populated item so a metadata-less republish won't blank the
             # existing description/certification.
-            existing = server.datasources.get_by_id(existing.id)
-            if args.metadata:
-                existing.description = ds_meta.get("description")
-                existing.certified = bool(ds_meta.get("certified", False))
-                if ds_meta.get("certification_note"):
-                    existing.certification_note = ds_meta["certification_note"]
+            with section("refresh existing data source"):
+                existing = server.datasources.get_by_id(existing.id)
+                if args.metadata:
+                    existing.description = ds_meta.get("description")
+                    existing.certified = bool(ds_meta.get("certified", False))
+                    if ds_meta.get("certification_note"):
+                        existing.certification_note = ds_meta["certification_note"]
 
-            print(
-                f"Refreshing existing data source {target!r} (id {existing.id}) in project "
-                f"{config['project_name']!r} -- preserving its model, swapping in {hyper_file}..."
-            )
-            published_ds, summary = publish_preserving_model(
-                server, existing, hyper_file, columns_metadata, calculations
-            )
-            _print_published(config, published_ds)
+                logger.info(
+                    "Refreshing existing data source %r (id %s) in project %r "
+                    "-- preserving its model, swapping in %s...",
+                    target, existing.id, config["project_name"], hyper_file,
+                )
+                published_ds, summary = publish_preserving_model(
+                    server, existing, hyper_file, columns_metadata, calculations
+                )
+                _print_published(config, published_ds)
 
             if args.metadata:
                 _apply_tags(server, published_ds, ds_meta)
-            print(_summary_line(summary))
+            logger.info(_summary_line(summary))
 
-    print("Done.")
+    logger.info("Done.")
+
+
+def main():
+    args = parse_args()
+    log_path = setup_logging(args.silent)
+    # First line so a reader (and anyone tailing the file) knows where the full
+    # record lives. In --silent mode this reaches only the log, not the console.
+    logger.info("Logging this run to %s", log_path)
+    logger.debug(
+        "Args: source=%r target=%r metadata=%r dry_run=%s silent=%s",
+        args.source, args.target, args.metadata, args.dry_run, args.silent,
+    )
+    try:
+        _run(args)
+    except SystemExit as exc:
+        # Usage/validation failures raise SystemExit with a message. Record it,
+        # then exit with status 1 WITHOUT re-raising the string -- re-raising it
+        # would make Python re-print the message to stderr, duplicating the
+        # console line and, worse, breaking --silent's no-stdout guarantee.
+        if exc.code not in (0, None):
+            logger.error("%s", exc.code)
+            raise SystemExit(1) from exc
+        raise
+    except Exception:
+        logger.exception("Unhandled error -- aborting")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
