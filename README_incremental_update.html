@@ -63,56 +63,35 @@
 <body>
 
 <h1>Incremental update — append new rows from a <code>.hyper</code> payload file</h1>
-<p class="subtitle">A standalone example: append brand-new rows to a Tableau <code>.hyper</code> extract with data from a separate <code>.hyper</code> data source.</p>
+<p class="subtitle">Two standalone code examples that append brand-new rows to a Tableau <code>.hyper</code> extract with data from a separate <code>.hyper</code> data source.</p>
 
 <div class="callout">
-  This is a self-contained sub-example of the <code>tableau_update_hyper</code> project. It has no dependency on the split/union/publish pipeline beyond needing an existing extract (<code>Finished_Merged.hyper</code>) to append to. See the main <a href="README.md">README.md</a> / <a href="readme_Union.html">readme_Union.html</a> for the wider project. Its sibling, <code>update_existing_rows.py</code>, is the edit-in-place half; this is the incremental-append half.
+  <p>
+    <strong><a href="#client-side-append">Client-side append</a></strong> &mdash; <code>incremental_update.py</code>
+    runs locally: a Hyper engine process on your machine attaches the extract and a payload file, then appends
+    with one <code>INSERT INTO ... SELECT *</code>. No network calls.
+  </p>
+  <p>
+    <strong><a href="#server-side-append">Server-side append</a></strong> &mdash; <code>update_cloud_hyper_data.py</code>
+    pushes data pieces/shards straight to an already-published Tableau Cloud data source and lets
+    <strong>Cloud</strong> do the appending/unioning, instead of unioning locally first. Particularly useful once
+    the extract you're adding to is already published and getting too large to republish in one shot: it lets
+    you append pieces directly to your published data source, rather than re-publishing the whole dataset.
+  </p>
 </div>
 
-<h2>What it demonstrates</h2>
+<h2 id="client-side-append">Client-side append (local, engine-side): <code>incremental_update.py</code></h2>
 <p>
-  <strong>Can you append brand-new rows to an existing Hyper extract, without rebuilding it?</strong>
-  Yes &mdash; the new rows live in their own <code>New_Rows.hyper</code> file; the script attaches
-  both that file and the existing extract, and appends every row with a single SQL
-  <code>INSERT INTO ... SELECT *</code>, executed inside Hyper's engine.
-</p>
-<p>
-  This mirrors the &ldquo;keep the data in the engine&rdquo; approach the rest of the project uses
-  (<code>update_existing_rows.py</code>, <code>union_hyper_files.py</code>, <code>generate_split_by_year.py</code>):
-  attach files under aliases, then run one <code>execute_command</code>.
+  Everything in this section runs entirely on your machine &mdash; nothing here talks to Tableau Cloud. See
+  <a href="#server-side-append">Server-side append</a> below for the alternative that appends directly to an
+  already-published Cloud data source.
 </p>
 
-<h2>Files</h2>
-<table>
-  <thead>
-    <tr><th>File</th><th>Role</th></tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><code>generate_new_rows.py</code></td>
-      <td>Creates <code>New_Rows.hyper</code>. Copies the extract's 21-column schema (via <code>get_table_definition</code>) so the payload lines up exactly, then bulk-inserts a Python list of brand-new rows. Run once (or whenever you change the payload).</td>
-    </tr>
-    <tr>
-      <td><code>New_Rows.hyper</code></td>
-      <td>The externalised payload: one table <code>"public"."New_Rows"</code> with the same shape as <code>Extract</code>, one row per new record. Committed, but fully regenerable.</td>
-    </tr>
-    <tr>
-      <td><code>incremental_update.py</code></td>
-      <td>Copies <code>Finished_Merged.hyper</code> &rarr; <code>Example_Insert.hyper</code>, attaches both the copy and <code>New_Rows.hyper</code>, and appends every new row in one <code>INSERT INTO ... SELECT *</code>.</td>
-    </tr>
-    <tr>
-      <td><code>Example_Insert.hyper</code></td>
-      <td>The disposable output &mdash; a copy of the extract with the new rows appended. Regenerated every run; never the real extract.</td>
-    </tr>
-  </tbody>
-</table>
-<p>Inputs it reads but never modifies: <code>Finished_Merged.hyper</code> (the extract to append to).</p>
-
-<h2>Requirements</h2>
+<h3>Requirements</h3>
 <p>The project virtualenv with <code>tableauhyperapi</code> installed (see the main <code>README.md</code> &sect;Setup for setup). The commands below are run from the project root (the parent of <code>scripts/</code>):</p>
 <pre><code>source .venv/bin/activate</code></pre>
 
-<h2>Running it</h2>
+<h3>Running it</h3>
 <pre><code>python3 scripts/generate_new_rows.py       # Create the new rows / payload (data/New_Rows.hyper)
 python3 scripts/incremental_update.py      # append the payload to a disposable copy</code></pre>
 
@@ -129,7 +108,7 @@ Newly appended rows, read back from the copy (3 row(s)):
     ...
 Done. Only Example_Insert.hyper was modified ...</code></pre>
 
-<h2>How it works</h2>
+<h3>How it works</h3>
 <ol>
   <li><strong><code>generate_new_rows.py</code></strong> opens the real extract read-only to copy its <code>Extract</code> table definition, creates an identically-shaped <code>"public"."New_Rows"</code> table in <code>New_Rows.hyper</code> (<code>CreateMode.CREATE_AND_REPLACE</code>, fresh every run), and bulk-inserts the <code>NEW_ROWS</code> list with an <code>Inserter</code>.</li>
   <li><strong><code>incremental_update.py</code></strong> copies the extract to a throwaway file, then opens a single Hyper connection and attaches <strong>both</strong> files under aliases &mdash; <code>target</code> (the copy) and <code>newrows</code> (the payload) &mdash; so one SQL engine sees both, addressable as <code>"alias"."schema"."table"</code>.</li>
@@ -151,7 +130,7 @@ SELECT * FROM "newrows"."public"."New_Rows"</code></pre>
   already work.
 </p>
 
-<h2>Sourcing the new rows from Snowflake (or anywhere else)</h2>
+<h3>Sourcing the new rows from somewhere else (eg Snowflake)</h3>
 <p>
   The append step is deliberately <strong>source-agnostic</strong>: <code>incremental_update.py</code>
   only ever reads the attached <code>New_Rows.hyper</code>, so it never changes regardless of where
@@ -165,16 +144,169 @@ SELECT * FROM "newrows"."public"."New_Rows"</code></pre>
   <li><strong>Bulk via Parquet</strong>: <code>COPY INTO</code> a stage as Parquet in Snowflake, then let the Hyper engine read it with <code>COPY ... FROM ... WITH (FORMAT parquet)</code>.</li>
 </ul>
 
-<h2>Customising the payload</h2>
+<h3>Customising the payload</h3>
 <p>Editing <em>which</em> rows get appended is a <strong>data-only</strong> change &mdash; no edits to <code>incremental_update.py</code>:</p>
 <ol>
   <li>Edit the <code>NEW_ROWS</code> list in <code>generate_new_rows.py</code> (or point it at Snowflake, as above). Each row must be in the extract's 21-column order.</li>
   <li>Re-run <code>python3 scripts/generate_new_rows.py</code>, then <code>python3 scripts/incremental_update.py</code>.</li>
 </ol>
 
-<h2>Safety</h2>
+<h3>Publishing the result to Tableau Cloud</h3>
+<p>
+  <code>incremental_update.py</code> only ever writes to the disposable <code>Example_Insert.hyper</code> copy
+  &mdash; nothing it does reaches Tableau Cloud. To make the appended rows show up in a published data source,
+  publish that copy with <code>publish_to_tableau_cloud.py</code> (the core pipeline's publish step; see
+  <code>readme_Union.html</code> for the full reference):
+</p>
+<pre><code># Publish the copy with the appended rows, updating the existing "Finished Merged" data source in place
+python3 scripts/publish_to_tableau_cloud.py --source=data/Example_Insert.hyper --target="Finished Merged"</code></pre>
+<p>
+  If the target data source already exists, its <strong>model is preserved</strong> &mdash; the <code>.tds</code>
+  is edited in place and only the extract data is swapped, so calculated fields, folders and aliases already on
+  the data source survive.
+</p>
+<div class="callout">
+  <code>--metadata</code> is optional, and metadata is <strong>only</strong> applied if you pass it. Run
+  <code>publish_to_tableau_cloud.py</code> without <code>--metadata</code> and the publish updates the extract
+  data only &mdash; no description, certification, tags, column descriptions, or calculated fields are
+  touched. To also refresh those, regenerate the metadata JSON from the appended copy and pass it explicitly:
+  <pre><code>python3 scripts/generate_metadata.py --source=data/Example_Insert.hyper --output=data/datasource_metadata.json
+python3 scripts/publish_to_tableau_cloud.py --source=data/Example_Insert.hyper --target="Finished Merged" --metadata=data/datasource_metadata.json</code></pre>
+  <code>generate_metadata.py</code> preserves any hand-added <code>calculations</code> block already in
+  <code>--output</code> when it re-profiles, so regenerating won't wipe calculated fields you've added to the
+  metadata JSON. Add <code>--dry-run</code> to either command to preview without making a network call.
+</div>
+
+<h3>Safety</h3>
 <div class="callout good">
-  <code>Finished_Merged.hyper</code> (and the live Tableau Cloud data source it backs) is never touched. Every run works on a fresh <code>Example_Insert.hyper</code> copy, so both scripts are safe to re-run any number of times.
+  <code>Finished_Merged.hyper</code> (and the live Tableau Cloud data source it backs) is never touched by
+  <code>incremental_update.py</code> or <code>generate_new_rows.py</code> &mdash; every run works on a fresh
+  <code>Example_Insert.hyper</code> copy, so both are safe to re-run any number of times. Publishing that copy
+  with <code>publish_to_tableau_cloud.py</code> (above) is the one step in this section that does make a live
+  change on Tableau Cloud.
+</div>
+
+<h2 id="server-side-append">Server-side append (Tableau Cloud): <code>update_cloud_hyper_data.py</code></h2>
+<p>
+  <code>incremental_update.py</code> (above) appends rows <em>locally</em>: it opens a Hyper engine process on
+  your machine, attaches two files, and writes the result to a new local <code>.hyper</code> file that would then
+  need to be (re)published as a whole. <code>update_cloud_hyper_data.py</code> takes the opposite approach: it
+  pushes individual <code>.hyper</code> &ldquo;piece&rdquo; files straight to an <strong>already-published</strong>
+  Tableau Cloud data source over the REST &ldquo;Update Data in Hyper&rdquo; API
+  (<code>tableauserverclient</code>'s <code>datasources.update_hyper_data</code>), and lets
+  <strong>Cloud</strong> append/union them into the live extract, one piece at a time &mdash; no local union, and
+  no full republish.
+</p>
+<p>
+  Why this exists: a single publish (<code>publish_to_tableau_cloud.py</code>) is bounded in size. Once the
+  locally-unioned extract (<code>Finished_Merged.hyper</code>) gets large, republishing it whole can hit that
+  ceiling. Growing the already-published data source piece by piece sidesteps that &mdash; each upload only has
+  to clear the much smaller <em>per-piece</em> ceiling, not the size of the whole data source.
+</p>
+<p>
+  A &ldquo;piece&rdquo; here plays the same role <code>New_Rows.hyper</code> plays for
+  <code>incremental_update.py</code>: an externalised payload with the same table shape as the target
+  (<code>"public"."Extract"</code>, e.g. one <code>Start_&lt;year&gt;.hyper</code> file per season, as produced
+  by <code>generate_split_by_year.py</code>) &mdash; except here each piece is read and merged by
+  <strong>Tableau Cloud</strong>, not by a local Hyper process.
+</p>
+
+<h3>How the pieces/shards are staged on Cloud before they're unioned</h3>
+<p>
+  This is the part that differs most from the client-side section above, where everything happens inside one
+  local Hyper engine call. For each piece, the script issues a separate <code>update_hyper_data</code> request
+  (a fresh <code>request_id</code>, one <code>insert</code> or <code>replace</code> action) and then blocks on
+  <code>server.jobs.wait_for_job(...)</code> before moving on to the next piece &mdash; pieces are uploaded and
+  committed <strong>one at a time, sequentially</strong>, never all at once:
+</p>
+<ol>
+  <li>
+    The piece file is uploaded to Tableau Cloud as the payload of that one request. This upload is
+    <strong>transient staging state</strong>, scoped to the background job that will process it &mdash; it is
+    not a browsable file, not a new revision, and not a permanent object anywhere on the site. There's no place
+    in the Cloud UI where an in-flight piece is visible.
+  </li>
+  <li>
+    A background job then applies the requested action directly to the data source's <em>real, already-
+    persisted</em> extract table:
+    <ul>
+      <li><code>insert</code> &mdash; the piece's rows are appended to the existing target table, equivalent to a server-side <code>INSERT INTO ... SELECT *</code>.</li>
+      <li><code>replace</code> &mdash; the target table is cleared first, then loaded from the piece &mdash; equivalent to a server-side truncate-then-load.</li>
+    </ul>
+  </li>
+  <li>
+    Once the job reports success, the staged piece is discarded. Nothing about it lingers on Cloud afterwards
+    &mdash; only its rows, now merged into the target extract's persisted data, remain.
+  </li>
+</ol>
+<p>
+  Because each piece is fully committed before the next one is even uploaded, there is never a point where Cloud
+  is holding several pending pieces side by side waiting to be unioned together in one batch. The eventual
+  &ldquo;union&rdquo; of all your pieces is really the <em>cumulative effect</em> of a sequence of small
+  server-side inserts, built up job by job &mdash; not one atomic <code>UNION ALL</code> the way
+  <code>union_hyper_files.py</code> does it locally. <code>--mode reload</code> makes this concrete: piece 1 goes
+  in via <code>replace</code> (the target table now holds just piece 1's rows), then every remaining piece goes
+  in via <code>insert</code>, growing the target table one piece at a time until it holds the union of all of
+  them.
+</p>
+<div class="callout">
+  If a multi-piece <code>--mode reload</code> run is interrupted partway through, whichever pieces already
+  committed are already merged into the <em>live</em> target table &mdash; there is no single rollback point
+  covering the whole run. Re-running the same <code>--mode reload</code> command is safe (it starts over with
+  <code>replace</code> on the first piece), but a failed run does not mean nothing changed on Cloud.
+</div>
+
+<h3>Modes</h3>
+<table>
+  <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>--mode append</code></td>
+      <td>Insert the given pieces into the <em>existing</em> data source, leaving its current rows in place. For incremental loads (e.g. one new season's file). Re-sending the same piece duplicates its rows &mdash; send each piece exactly once. Fails if the data source doesn't exist yet.</td>
+    </tr>
+    <tr>
+      <td><code>--mode reload</code></td>
+      <td>Rebuilds the whole data source from the given pieces: the first piece via <code>replace</code> (clears the target table), every remaining piece via <code>insert</code>. If the target data source doesn't exist yet, it's created by publishing the first piece, then the rest are inserted.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Safeguards</h3>
+<ul>
+  <li><strong>Per-piece size ceiling.</strong> Each upload is bounded by the Cloud setting <code>api.server.update_uploaded_file.max_size_in_mb</code> (default 100&nbsp;MB, fixed on Cloud &mdash; chunked upload cannot make one update exceed it), even though the aggregate data source may end up far larger. A pre-flight check reports every piece's size and <strong>aborts before any upload</strong> if one is at/over the limit, so a doomed run never half-loads the target.</li>
+  <li><strong>Defaults to a separate test data source.</strong> <code>--datasource-name</code> defaults to <code>"Finished Merged (API Union Test)"</code>, not the real <code>Finished Merged</code> data source, so you can validate the approach without risking live content. Point it at the real data source with <code>--datasource-name "Finished Merged"</code> only once you're happy.</li>
+  <li><strong>Model preserved.</strong> <code>update_hyper_data</code> changes data only, so calculated fields, column descriptions, folders and aliases already on the data source survive untouched &mdash; no <code>.tds</code> download/patch/rebuild, unlike <code>publish_to_tableau_cloud.py</code>. The one exception is the create path: a brand-new data source published from a bare piece only has the fields present in that piece's extract.</li>
+  <li><strong>Table-name mismatch is expected.</strong> Piece files carry table <code>"public"."Extract"</code>, but a data source published from such a <code>.hyper</code> commonly stores its extract as <code>"Extract"."Extract"</code> on Cloud. <code>--source-schema</code>/<code>--source-table</code> and <code>--target-schema</code>/<code>--target-table</code> are configurable if an update fails complaining about an unknown table.</li>
+  <li><strong>Always logged.</strong> Every run writes a full, timestamped record to <code>logs/update_&lt;timestamp&gt;.log</code>; <code>--silent</code> suppresses console output only, never the log file.</li>
+</ul>
+
+<h3>Requirements</h3>
+<p>
+  Unlike <code>incremental_update.py</code> (fully local), this script makes real network calls to Tableau
+  Cloud, so it needs a filled-in <code>.env</code> &mdash; the same configuration as
+  <code>publish_to_tableau_cloud.py</code> &mdash; see the main <a href="README.md">README.md</a> &sect;Setup.
+</p>
+
+<h3>Running it / Usage</h3>
+<pre><code># Build the whole test data source from all yearly pieces server-side (creates it if it doesn't exist)
+python3 scripts/update_cloud_hyper_data.py --mode reload
+
+# Append just the new season's piece to it
+python3 scripts/update_cloud_hyper_data.py --mode append --files data/Start_2026.hyper
+
+# See the plan + per-piece size report without calling Cloud
+python3 scripts/update_cloud_hyper_data.py --mode reload --dry-run
+
+# Push to a specific data source (e.g. the real one, once validated)
+python3 scripts/update_cloud_hyper_data.py --mode reload --datasource-name "Finished Merged"</code></pre>
+
+<h3>Safety</h3>
+<div class="callout good">
+  <code>update_cloud_hyper_data.py</code> targets a separate test data source by default (see Safeguards above)
+  and always writes a full log under <code>logs/</code>. But once pointed at a real data source it does make
+  live changes on Tableau Cloud &mdash; a piece pushed with <code>--mode append</code> is not undone by
+  re-running the script, and <code>--mode reload</code>'s first piece clears the target table via
+  <code>replace</code> before reloading it.
 </div>
 
 <footer>
