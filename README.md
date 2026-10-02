@@ -9,8 +9,8 @@ This README is the map for the whole repo — it describes every script and how 
 | Guide | What it covers |
 |---|---|
 | **[`readme_Union.html`](readme_Union.html)** | The core pipeline: split `Start.hyper` into one file per year, merge the pieces back into `Finished_Merged.hyper` with a single native `UNION ALL`, profile it into a metadata JSON file, and publish it to Tableau Cloud. Includes the source-data reference, why the union approach is the fastest one Tableau recommends, a 2026 API re-check, lossless-round-trip verification, and the Tableau Cloud publishing specifics (including column descriptions). |
-| **[`README_update_existing_rows.html`](README_update_existing_rows.html)** | Updating existing rows in place: change a measure on rows already in an extract with a data-driven cross-database `UPDATE ... FROM`, reading the new values from a separate `.hyper` payload. |
-| **[`README_incremental_update.html`](README_incremental_update.html)** | Appending brand-new rows: add records to an existing extract with a data-driven `INSERT INTO ... SELECT *`, reading the new rows from a separate `.hyper` payload. |
+| **[`README_update_hyper.html`](README_update_hyper.html)** | Updating existing rows in place: change a measure on rows already in an extract with a data-driven cross-database `UPDATE ... FROM`, reading the new values from a separate `.hyper` payload. |
+| **[`README_insert_into_hyper.html`](README_insert_into_hyper.html)** | Appending brand-new rows: add records to an existing extract with a data-driven `INSERT INTO ... SELECT *`, reading the new rows from a separate `.hyper` payload. |
 
 > The HTML files are the canonical, in-depth versions. This README is the concise overview for GitHub.
 
@@ -20,22 +20,28 @@ This README is the map for the whole repo — it describes every script and how 
 tableau_update_hyper/
 ├── README.md                          # this file — overview of every script, links to the HTML guides
 ├── readme_Union.html                  # GUIDE: the core split → merge → metadata → publish pipeline
-├── README_update_existing_rows.html   # GUIDE: update existing rows in place from a .hyper payload
-├── README_incremental_update.html     # GUIDE: append brand-new rows from a .hyper payload
+├── README_update_hyper.html           # GUIDE: update existing rows in place from a .hyper payload
+├── README_insert_into_hyper.html      # GUIDE: append brand-new rows from a .hyper payload
 ├── requirements.txt                   # pinned package versions
 ├── .env.example                       # template for the publish step's config — copy to .env and fill in
 │
-├── scripts/                           # all code: the Python scripts + the PowerShell wrapper
+├── scripts/                           # all code: the Python scripts
 │   ├── generate_split_by_year.py      # Start.hyper → Start_<year>.hyper (one file per year)
 │   ├── union_hyper_files.py           # Start_*.hyper → Finished_Merged.hyper (native UNION ALL)
 │   ├── generate_metadata.py           # any --source .hyper file → a metadata JSON file
-│   ├── publish_to_tableau_cloud.py    # publish --source as --target, optionally applying a --metadata JSON
-│   ├── publish_to_tableau_cloud.ps1   # Windows/PowerShell wrapper for the script above
+│   ├── clientside_publish_hyper.py    # publish --source (data + optional metadata) as --target
+│   ├── serverside_publish_hyper.py    # push .hyper pieces to Cloud and union them server-side
+│   ├── publish_metadata.py            # apply a --metadata JSON to an existing data source only
 │   ├── download_metadata.py           # download a published data source's .tds from Cloud (read-only)
 │   ├── generate_updates.py            # builds data/Updates.hyper (the update payload)
-│   ├── update_existing_rows.py        # applies Updates.hyper with one UPDATE ... FROM
+│   ├── update_hyper.py                # applies Updates.hyper with one UPDATE ... FROM
 │   ├── generate_new_rows.py           # builds data/New_Rows.hyper (the append payload)
-│   └── incremental_update.py          # appends New_Rows.hyper with one INSERT INTO ... SELECT *
+│   ├── insert_into_hyper.py           # appends New_Rows.hyper with one INSERT INTO ... SELECT *
+│   │
+│   ├── tableau_auth.py                # shared: .env config + Tableau Cloud sign-in (imported, not run)
+│   ├── tableau_logging.py             # shared: per-run logging setup + section markers (imported, not run)
+│   ├── tableau_lookup.py              # shared: find a project/data source by name (imported, not run)
+│   └── tds_model.py                   # shared: load metadata JSON, patch/rebuild a .tds (imported, not run)
 │
 └── data/                              # every .hyper file + the generated metadata JSON
     ├── Start.hyper                    # original, untouched source extract
@@ -45,8 +51,8 @@ tableau_update_hyper/
     ├── Finished_Merged.tds            # downloaded by download_metadata.py (the live Cloud model; optional)
     ├── Updates.hyper                  # generated by generate_updates.py (update payload)
     ├── New_Rows.hyper                 # generated by generate_new_rows.py (append payload)
-    ├── Example_Update.hyper           # generated by update_existing_rows.py (disposable copy)
-    └── Example_Insert.hyper           # generated by incremental_update.py (disposable copy)
+    ├── Example_Update.hyper           # generated by update_hyper.py (disposable copy)
+    └── Example_Insert.hyper           # generated by insert_into_hyper.py (disposable copy)
 ```
 
 All scripts resolve their `.hyper`/`.json` paths relative to their own location (they read and write `data/` regardless of the current working directory), so they run correctly from anywhere. The commands below are written from the project root.
@@ -60,23 +66,24 @@ All scripts resolve their `.hyper`/`.json` paths relative to their own location 
 | `generate_split_by_year.py` | Splits `data/Start.hyper` into one `data/Start_<year>.hyper` per calendar year in the `"Match Date"` column. Every output shares the source's exact table structure, so the pieces can be recombined losslessly. Optional — it just produces a realistic multi-file input for the merge. |
 | `union_hyper_files.py` | Merges `data/Start_*.hyper` back into `data/Finished_Merged.hyper` by attaching every file to one Hyper process and running a single native `UNION ALL` — no row ever crosses into Python. Supports `--dry-run`. |
 | `generate_metadata.py` | Generic profiler: inspects any `--source` `.hyper` file and writes a metadata JSON (`--output`) describing it — name, description, tags, certification, and per-column descriptions derived purely from the data's shape. Preserves any hand-added `calculations` block in the existing output file. |
-| `publish_to_tableau_cloud.py` | Publishes `--source` to Tableau Cloud as `--target` (derived from the filename if omitted) and, if `--metadata` is given, applies that JSON: description, tags, certification, column descriptions, and any calculated fields. If the data source already exists, its **model is preserved** — the `.tds` is edited in place (existing calculated fields, folders and aliases kept) and only the extract data is swapped. Reads its connection config from `.env`. Supports `--dry-run`. |
-| `publish_to_tableau_cloud.ps1` | Windows/PowerShell wrapper for the above — finds the venv, checks `.env`, forwards its parameters. |
-| `download_metadata.py` | The read-only "pull" counterpart to publishing: downloads an existing published data source from Tableau Cloud and extracts its `.tds` model, printing a summary — fields, descriptions, and any **calculated fields** with their formulas. Selects by `--name` (within the `.env` project) or `--id`; model-only by default, `--with-extract` for the full `.tdsx`. Reuses the publish script's `.env` config. |
+| `clientside_publish_hyper.py` | Publishes `--source` to Tableau Cloud as `--target` (derived from the filename if omitted) and, if `--metadata` is given, applies that JSON: description, tags, certification, column descriptions, and any calculated fields. If the data source already exists, its **model is preserved** — the `.tds` is edited in place (existing calculated fields, folders and aliases kept) and only the extract data is swapped. Reads its connection config from `.env`. Supports `--dry-run`. |
+| `serverside_publish_hyper.py` | Pushes individual `.hyper` "pieces" to an existing (or new) Cloud data source via the REST "Update Data in Hyper" API and unions them **server-side**, instead of publishing one large locally-merged extract. `--mode reload` rebuilds from all pieces; `--mode append` adds just the new ones. Data-only — the model is untouched. See [`README_insert_into_hyper.html`](README_insert_into_hyper.html) (Server-side append) for the full writeup. Supports `--dry-run`. |
+| `publish_metadata.py` | Applies a `--metadata` JSON to an **already-published** data source — description, tags, certification, column descriptions, calculated fields — without reading or uploading any `.hyper` file; the data source's existing extract is repacked unchanged. See [Metadata-only updates](#metadata-only-updates-the-three-metadata-scripts) below. Supports `--dry-run`. |
+| `download_metadata.py` | The read-only "pull" counterpart to publishing: downloads an existing published data source from Tableau Cloud and extracts its `.tds` model, printing a summary — fields, descriptions, and any **calculated fields** with their formulas. Selects by `--name` (within the `.env` project) or `--id`; model-only by default, `--with-extract` for the full `.tdsx`. Reuses the shared `.env` config. |
 
-### Update existing rows — see [`README_update_existing_rows.html`](README_update_existing_rows.html)
+### Update existing rows — see [`README_update_hyper.html`](README_update_hyper.html)
 
 | Script | Purpose |
 |---|---|
 | `generate_updates.py` | Builds `data/Updates.hyper` — a `"public"."Updates"` table of `[Chain Id, New Metres Gained]` rows (the externalised update payload). |
-| `update_existing_rows.py` | Copies `Finished_Merged.hyper` → `Example_Update.hyper`, attaches both it and `Updates.hyper`, and applies every update in one engine-side `UPDATE ... FROM`. Only the copy is ever modified. |
+| `update_hyper.py` | Copies `Finished_Merged.hyper` → `Example_Update.hyper`, attaches both it and `Updates.hyper`, and applies every update in one engine-side `UPDATE ... FROM`. Only the copy is ever modified. |
 
-### Append new rows — see [`README_incremental_update.html`](README_incremental_update.html)
+### Append new rows — see [`README_insert_into_hyper.html`](README_insert_into_hyper.html)
 
 | Script | Purpose |
 |---|---|
 | `generate_new_rows.py` | Builds `data/New_Rows.hyper` — a `"public"."New_Rows"` table with the same 21-column shape as `Extract` (the externalised append payload). Carries a commented block on sourcing the rows from Snowflake instead. |
-| `incremental_update.py` | Copies `Finished_Merged.hyper` → `Example_Insert.hyper`, attaches both it and `New_Rows.hyper`, and appends every row in one engine-side `INSERT INTO ... SELECT *`. Only the copy is ever modified. |
+| `insert_into_hyper.py` | Copies `Finished_Merged.hyper` → `Example_Insert.hyper`, attaches both it and `New_Rows.hyper`, and appends every row in one engine-side `INSERT INTO ... SELECT *`. Only the copy is ever modified. |
 
 ## Setup
 
@@ -90,7 +97,7 @@ pip install -r requirements.txt
 cp .env.example .env   # only needed for the publish step — then edit .env with real Tableau Cloud details
 ```
 
-> Only `publish_to_tableau_cloud.py` reads `.env`; it checks for all five required variables up front and refuses to make any network call if any are missing. Every other script needs no configuration and runs right after `pip install`. See [`readme_Union.html`](readme_Union.html) (Appendix I) for what each variable means.
+> `clientside_publish_hyper.py`, `serverside_publish_hyper.py`, `publish_metadata.py`, and `download_metadata.py` all read `.env` (via the shared `tableau_auth.py` config loader); each checks for all five required variables up front and refuses to make any network call if any are missing. Every other script needs no configuration and runs right after `pip install`. See [`readme_Union.html`](readme_Union.html) (Appendix I) for what each variable means.
 >
 > **`.env` holds a live credential** (a Tableau Personal Access Token). Never commit it, paste it into chat, or share it. `.env.example` (checked in) has no real values.
 >
@@ -111,20 +118,14 @@ python3 scripts/union_hyper_files.py
 python3 scripts/generate_metadata.py --source=data/Finished_Merged.hyper --output=data/datasource_metadata.json
 
 # 3. Publish to Tableau Cloud (requires a filled-in .env; add --dry-run to preview)
-python3 scripts/publish_to_tableau_cloud.py --source=data/Finished_Merged.hyper --metadata=data/datasource_metadata.json
+python3 scripts/clientside_publish_hyper.py --source=data/Finished_Merged.hyper --metadata=data/datasource_metadata.json
 ```
 
-`generate_metadata.py` and `publish_to_tableau_cloud.py` both require `--source` (there is no default file) and work unchanged against any single-table `.hyper` file. `--target` and `--metadata` are optional. See [`readme_Union.html`](readme_Union.html) for the full flag reference and expected output.
-
-**Windows / PowerShell** — the wrapper forwards its parameters to the Python script:
-
-```powershell
-.\scripts\publish_to_tableau_cloud.ps1 -Source data\Finished_Merged.hyper -Metadata data\datasource_metadata.json -DryRun
-```
+`generate_metadata.py` and `clientside_publish_hyper.py` both require `--source` (there is no default file) and work unchanged against any single-table `.hyper` file. `--target` and `--metadata` are optional. See [`readme_Union.html`](readme_Union.html) for the full flag reference and expected output.
 
 ## Calculated fields & preserving the Cloud model
 
-A `.tds` model carries more than the columns a profiler can see — calculated fields, folders, aliases, and geographic roles, often authored directly in Tableau. To keep those safe, `publish_to_tableau_cloud.py` treats the `.tds` as the source of truth for the *model* and the `.hyper` as just the *data*:
+A `.tds` model carries more than the columns a profiler can see — calculated fields, folders, aliases, and geographic roles, often authored directly in Tableau. To keep those safe, `clientside_publish_hyper.py` treats the `.tds` as the source of truth for the *model* and the `.hyper` as just the *data*:
 
 - **If the data source already exists**, its current `.tds` is downloaded, patched (column descriptions + calculated fields from the metadata JSON), and republished with only its extract data swapped for your local `.hyper`. Anything already on the model — including calculated fields added in Tableau — is preserved.
 - **If it's brand new**, it's bootstrapped from the `.hyper`, then the model metadata is patched on.
@@ -146,6 +147,32 @@ Calculated fields are author-supplied (a profiler can't invent formulas). Add th
 
 Each entry becomes a Tableau calculated field on publish; re-publishing updates it in place rather than duplicating it. `generate_metadata.py` preserves this block when it re-profiles, so regenerating the metadata won't wipe your calcs. Use `--dry-run` to preview exactly which descriptions and calculations would be applied without any network call.
 
+## Metadata-only updates: the three metadata scripts
+
+Three scripts handle a data source's *metadata* — name, description, tags, certification, column descriptions, calculated fields — independently of its extract data:
+
+| Script | Direction | What it does |
+|---|---|---|
+| `generate_metadata.py` | local `.hyper` → JSON | Profiles a `.hyper` file and writes a metadata JSON describing it (column types, distinct-value counts, ranges/samples). Preserves any hand-added `calculations` block across re-runs. |
+| `download_metadata.py` | Cloud → local `.tds` | Pulls an existing data source's live `.tds` model back down (read-only) so you can see what's actually on Cloud — including calculated fields or edits made in Tableau Desktop/web authoring that a profiler could never know about. |
+| `publish_metadata.py` | local JSON → Cloud | Applies a metadata JSON to an **already-published** data source: downloads its current `.tdsx`, patches the `.tds` (column descriptions + calculated fields), sets description/certification/tags, and republishes with the **same extract bytes it already had** — no local `.hyper` file is read or uploaded. |
+
+Together they form a metadata-only loop that never touches extract data:
+
+```
+# 1. Profile the extract into a metadata JSON (or hand-edit an existing one)
+python3 scripts/generate_metadata.py --source=data/Finished_Merged.hyper --output=data/datasource_metadata.json
+
+# 2. Preview, then apply, the metadata to the already-published data source
+python3 scripts/publish_metadata.py --target="Finished Merged" --metadata=data/datasource_metadata.json --dry-run
+python3 scripts/publish_metadata.py --target="Finished Merged" --metadata=data/datasource_metadata.json
+
+# 3. Confirm what's actually live afterwards
+python3 scripts/download_metadata.py --name "Finished Merged"
+```
+
+Use `publish_metadata.py` instead of `clientside_publish_hyper.py` when only the metadata changed — a tidied-up description, a new calculated field, a tag — and there's no reason to re-run the hyper pipeline or re-upload an extract just to apply it. `clientside_publish_hyper.py` remains the one to use when the **data** also needs to change (its own `--metadata` flag applies the same kind of JSON alongside the data refresh); `publish_metadata.py` requires the data source to already exist and has no bootstrap path.
+
 ## Reading a data source back from Cloud
 
 `download_metadata.py` is the read-only counterpart to publishing: it downloads an existing data source's model (`.tds`) from Tableau Cloud and prints a summary — fields, descriptions, and any **calculated fields** with their formulas. Use it to inspect what's live before publishing, or to confirm what a publish did. (Publishing *preserves* an existing data source's model rather than overwriting it — see [Calculated fields & preserving the Cloud model](#calculated-fields--preserving-the-cloud-model) below.)
@@ -165,11 +192,11 @@ These two examples are independent of the core pipeline beyond needing an existi
 ```
 # Update existing rows in place
 python3 scripts/generate_updates.py        # once, to create data/Updates.hyper
-python3 scripts/update_existing_rows.py
+python3 scripts/update_hyper.py
 
 # Append brand-new rows
 python3 scripts/generate_new_rows.py        # once, to create data/New_Rows.hyper
-python3 scripts/incremental_update.py
+python3 scripts/insert_into_hyper.py
 ```
 
 To change *which* rows are updated or appended, edit the payload list in the relevant generator and re-run it — the apply scripts never change.

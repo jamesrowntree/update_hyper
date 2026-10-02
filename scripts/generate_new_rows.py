@@ -1,13 +1,13 @@
 """
 generate_new_rows.py
 
-Builds New_Rows.hyper -- a small data source that incremental_update.py reads
+Builds New_Rows.hyper -- a small data source that insert_into_hyper.py reads
 its brand-new rows from, instead of hardcoding them in Python. 
 It is the new-rows counterpart to generate_updates.py.
 
 The output is a single table, "public"."New_Rows", with EXACTLY the same
 21-column shape as the "Extract" table in Finished_Merged.hyper. Matching the
-shape lets incremental_update.py append the rows with one engine-side
+shape lets insert_into_hyper.py append the rows with one engine-side
 `INSERT INTO ... SELECT * FROM ...`, so no row data ever crosses into Python.
 
 Rather than re-declare all 21 columns by hand (and risk drifting from the real
@@ -43,7 +43,7 @@ NEWROWS_FILE = "New_Rows.hyper"
 EXTRACT_TABLE = TableName("public", "Extract")
 NEWROWS_TABLE = TableName("public", "New_Rows")
 
-# Resolve paths relative to this file (see update_existing_rows.py for the why):
+# Resolve paths relative to this file (see update_hyper.py for the why):
 # this script lives in scripts/ and reads/writes .hyper files in the sibling
 # data/ folder -- both the source extract and the payload we build live there.
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -77,10 +77,10 @@ NEWROWS_PATH = os.path.join(DATA_DIR, NEWROWS_FILE)
 #   Python entirely): in Snowflake, `COPY INTO <stage> ... FILE_FORMAT=(TYPE=PARQUET)`
 #   to unload the query, then let the Hyper engine read that file directly with
 #   `COPY "public"."New_Rows" FROM 'new_rows.parquet' WITH (FORMAT parquet)` (see
-#   the Hyper `COPY` / `external()` docs). incremental_update.py is untouched --
+#   the Hyper `COPY` / `external()` docs). insert_into_hyper.py is untouched --
 #   it still just attaches the resulting New_Rows.hyper.
 #
-# Either way, incremental_update.py's `INSERT INTO ... SELECT *` never changes;
+# Either way, insert_into_hyper.py's `INSERT INTO ... SELECT *` never changes;
 # only where THIS file gets its rows does.
 # -----------------------------------------------------------------------------
 
@@ -112,7 +112,7 @@ def main():
     with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "generatenewrows") as hyper:
         # 2. Read the extract's table definition (read-only), so New_Rows can be
         #    given exactly the same 21 columns (names/types/order) as Extract --
-        #    the guarantee that makes incremental_update.py's `SELECT *` line up.
+        #    the guarantee that makes insert_into_hyper.py's `SELECT *` line up.
         #    Done in its own connection so New_Rows is the sole database below and
         #    the unqualified "public" resolves cleanly (attaching a second
         #    database would remove that default-database context).

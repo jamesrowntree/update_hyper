@@ -76,7 +76,7 @@
     </tr>
     <tr>
       <td valign="top" class="td3">
-        <p class="p7"><span class="s6">update_existing_rows.py</span></p>
+        <p class="p7"><span class="s6">update_hyper.py</span></p>
       </td>
       <td valign="top" class="td4">
         <p class="p6"><span class="s1">Copies </span><span class="s7">Finished_Merged.hyper</span><span class="s1"> → </span><span class="s7">Example_Update.hyper</span><span class="s1">, attaches both the copy and </span><span class="s7">Updates.hyper</span><span class="s1">, and applies every update in one </span><span class="s7">UPDATE ... FROM</span><span class="s1">.</span></p>
@@ -98,7 +98,7 @@
 <p class="p8"><span class="s1">source .venv/bin/activate</span></p>
 <h2 style="margin: 0.0px 0.0px 13.9px 0.0px; font: 16.8px 'Helvetica Neue'; color: #151719; -webkit-text-stroke: #151719"><span class="s1"><b>Running it</b></span></h2>
 <p class="p8"><span class="s1">python3 scripts/generate_updates.py<span class="Apple-converted-space">        </span># To create the payload data/Updates.hyper</span></p>
-<p class="p8"><span class="s1">python3 scripts/update_existing_rows.py<span class="Apple-converted-space">      </span># apply the payload to a disposable copy</span></p>
+<p class="p8"><span class="s1">python3 scripts/update_hyper.py<span class="Apple-converted-space">      </span># apply the payload to a disposable copy</span></p>
 <p class="p5"><span class="s1">Expected output:</span></p>
 <p class="p8"><span class="s1">Wrote 5 update row(s) to Updates.hyper (table "public"."Updates").</span></p>
 <p class="p9"><span class="s1"></span><br></p>
@@ -117,7 +117,7 @@
 <h2 style="margin: 0.0px 0.0px 13.9px 0.0px; font: 16.8px 'Helvetica Neue'; color: #151719; -webkit-text-stroke: #151719"><span class="s1"><b>How it works</b></span></h2>
 <ol class="ol1">
   <li class="li10"><span class="s8"><b></b></span><span class="s4"><b>generate_updates.py</b></span><span class="s1"> opens </span><span class="s4">Updates.hyper</span><span class="s1"> with </span><span class="s4">CreateMode.CREATE_AND_REPLACE</span><span class="s1"> (fresh every run), creates the </span><span class="s4">"public"."Updates"</span><span class="s1"> table from an explicit </span><span class="s4">TableDefinition</span><span class="s1">, and bulk-inserts the </span><span class="s4">UPDATE_ROWS</span><span class="s1"> list with an </span><span class="s4">Inserter</span><span class="s1">.</span></li>
-  <li class="li10"><span class="s8"><b></b></span><span class="s4"><b>update_existing_rows.py</b></span><span class="s1"> copies the extract to a throwaway file, then opens a single Hyper connection and attaches <b>both</b> files under aliases — </span><span class="s4">target</span><span class="s1"> (the copy) and </span><span class="s4">updates</span><span class="s1"> (the payload) — so one SQL engine sees both, addressable as </span><span class="s4">"alias"."schema"."table"</span><span class="s1">.</span></li>
+  <li class="li10"><span class="s8"><b></b></span><span class="s4"><b>update_hyper.py</b></span><span class="s1"> copies the extract to a throwaway file, then opens a single Hyper connection and attaches <b>both</b> files under aliases — </span><span class="s4">target</span><span class="s1"> (the copy) and </span><span class="s4">updates</span><span class="s1"> (the payload) — so one SQL engine sees both, addressable as </span><span class="s4">"alias"."schema"."table"</span><span class="s1">.</span></li>
   <li class="li10"><span class="s9"></span><span class="s1">It applies everything in one statement: </span><span class="s10">UPDATE "target"."public"."Extract" AS e</span></li>
   <li class="li8"><span class="s9"></span><span class="s1">SET "Metres Gained" = u."New Metres Gained"</span></li>
   <li class="li8"><span class="s9"></span><span class="s1">FROM "updates"."public"."Updates" AS u</span></li>
@@ -130,7 +130,7 @@
 <p class="p5"><span class="s1">Editing <i>which</i> rows change is a <b>data-only</b> change — no code edits:</span></p>
 <ol class="ol1">
   <li class="li10"><span class="s9"></span><span class="s1">Edit the </span><span class="s4">UPDATE_ROWS</span><span class="s1"> list in </span><span class="s4">generate_updates.py</span><span class="s1">. The Chain Ids must be real keys present in the extract.</span></li>
-  <li class="li12"><span class="s12"></span><span class="s13">Re-run </span><span class="s6">python3 scripts/generate_updates.py</span><span class="s13">, then </span><span class="s6">python3 scripts/update_existing_rows.py</span><span class="s13">.</span></li>
+  <li class="li12"><span class="s12"></span><span class="s13">Re-run </span><span class="s6">python3 scripts/generate_updates.py</span><span class="s13">, then </span><span class="s6">python3 scripts/update_hyper.py</span><span class="s13">.</span></li>
 </ol>
 <p class="p5"><span class="s1">If a </span><span class="s4">Chain Id</span><span class="s1"> in the payload matches no row in the extract, the update simply affects fewer rows and the script prints a one-line </span><span class="s4">WARNING</span><span class="s1"> naming the shortfall — it does not fail.</span></p>
 <h2 style="margin: 0.0px 0.0px 13.9px 0.0px; font: 16.8px 'Helvetica Neue'; color: #151719; -webkit-text-stroke: #151719"><span class="s1"><b>Safety</b></span></h2>

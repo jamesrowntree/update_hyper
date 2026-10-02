@@ -17,7 +17,7 @@ so review and edit the generated descriptions before treating them as
 documentation. See COLUMN_DESCRIPTION_DISCLAIMER below, which is also
 carried into the output JSON so it isn't lost downstream.
 
-publish_to_tableau_cloud.py reads this file's output (via its own
+clientside_publish_hyper.py reads this file's output (via its own
 --metadata flag) and applies the datasource-level fields (name,
 description, tags, certification) and per-column descriptions to the
 published data source.
@@ -26,7 +26,7 @@ Calculated fields cannot be profiled from data -- their formulas are
 author-supplied. If the output file already contains a "calculations"
 block, this script carries it forward unchanged when re-profiling, so
 regenerating the metadata never wipes hand-added calculated fields.
-publish_to_tableau_cloud.py applies that block too.
+clientside_publish_hyper.py applies that block too.
 
 Usage (run from the project root; paths are just examples -- this is a generic
 tool that accepts any single-table .hyper file):
@@ -100,7 +100,7 @@ COLUMN_DESCRIPTION_DISCLAIMER = (
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Inspect a .hyper file and write a metadata JSON file describing it, for publish_to_tableau_cloud.py's --metadata flag."
+        description="Inspect a .hyper file and write a metadata JSON file describing it, for clientside_publish_hyper.py's --metadata flag."
     )
     parser.add_argument(
         "--source",
