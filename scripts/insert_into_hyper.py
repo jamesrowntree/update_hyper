@@ -1,5 +1,5 @@
 """
-incremental_update.py
+insert_into_hyper.py
 
 This appends new rows to an EXISTING extract without rebuilding it.
 
@@ -33,7 +33,7 @@ never disturbs the file that's actually published to Tableau Cloud.
 
 Usage (from the project root):
     python3 scripts/generate_new_rows.py     # once, to create data/New_Rows.hyper
-    python3 scripts/incremental_update.py
+    python3 scripts/insert_into_hyper.py
 """
 
 import os
@@ -63,7 +63,7 @@ NEWROWS_PATH = os.path.join(DATA_DIR, NEWROWS_FILE)
 
 # Both files are attached under their own alias (see attach_database below) and
 # referenced with fully-qualified "alias"."schema"."table" names, exactly like
-# update_existing_rows.py, union_hyper_files.py and generate_split_by_year.py.
+# update_hyper.py, union_hyper_files.py and generate_split_by_year.py.
 TABLE = TableName("target", "public", "Extract")            # the copy we append to
 NEWROWS_TABLE = TableName("newrows", "public", "New_Rows")  # the payload we read
 
@@ -100,7 +100,7 @@ def main():
     shutil.copyfile(SOURCE_PATH, EXAMPLE_PATH)
     print(f"Copied {SOURCE_FILE} -> {EXAMPLE_FILE} (only the copy will be modified)")
 
-    with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "incrementalupdate") as hyper:
+    with HyperProcess(Telemetry.DO_NOT_SEND_USAGE_DATA_TO_TABLEAU, "insertintohyper") as hyper:
         # 3. Open a bare connection and attach both files under their own alias, so
         #    a single SQL engine sees both. attach_database uses CreateMode.NONE:
         #    the files are opened as-is, NOT recreated or wiped. The target

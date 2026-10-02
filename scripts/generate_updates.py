@@ -1,7 +1,7 @@
 """
 generate_updates.py
 
-Builds Updates.hyper -- the small data source that update_existing_rows.py
+Builds Updates.hyper -- the small data source that update_hyper.py
 reads its update payload from, instead of hardcoding the values in Python.
 
 Why a generator script? .hyper files are binary and there is no CSV-import
@@ -17,7 +17,7 @@ apply:
     "Chain Id"          -- the key, matches "Chain Id" in Finished_Merged.hyper
     "New Metres Gained" -- the absolute value to set "Metres Gained" to
 
-update_existing_rows.py attaches this file and applies every row in one
+update_hyper.py attaches this file and applies every row in one
 engine-side `UPDATE ... FROM` join, so the update values never cross into
 Python.
 
@@ -42,14 +42,14 @@ from tableauhyperapi import (
 
 # --- Configuration -----------------------------------------------------------
 # The file we produce and the table inside it. Unqualified here ("public".
-# "Updates") because this script owns the whole file; update_existing_rows.py
+# "Updates") because this script owns the whole file; update_hyper.py
 # attaches it under the "updates" alias when it reads it.
 UPDATES_FILE = "Updates.hyper"          # display name (see UPDATES_PATH for the real location)
 UPDATES_TABLE = TableName("public", "Updates")
 
 # This script lives in scripts/; the payload file is written into the project's
 # data/ folder (a sibling of scripts/), resolved relative to __file__ so it runs
-# from any working directory, alongside the .hyper files update_existing_rows.py reads.
+# from any working directory, alongside the .hyper files update_hyper.py reads.
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.path.dirname(HERE), "data")
 UPDATES_PATH = os.path.join(DATA_DIR, UPDATES_FILE)
@@ -68,10 +68,10 @@ UPDATES_TABLE_DEF = TableDefinition(
 )
 
 # --- The payload -------------------------------------------------------------
-# This is the data that used to be hardcoded inside update_existing_rows.py.
+# This is the data that used to be hardcoded inside update_hyper.py.
 # Each pair is [Chain Id, New Metres Gained]. These are real Chain Ids from
 # Finished_Merged.hyper (a Wallabies vs. England match on 2021-07-11), so the
-# before/after in update_existing_rows.py is concrete and verifiable. To change
+# before/after in update_hyper.py is concrete and verifiable. To change
 # which rows get updated, edit this list and re-run -- no other code changes.
 UPDATE_ROWS = [
     ["110023590_001", 25],   # was 10

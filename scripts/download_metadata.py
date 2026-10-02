@@ -7,7 +7,7 @@ any calculated fields defined on it. This is READ-ONLY: it never publishes,
 overwrites, or changes anything on the site, so it is always safe to run
 against the live data source.
 
-It is the "pull" counterpart to publish_to_tableau_cloud.py's "push". Use it
+It is the "pull" counterpart to clientside_publish_hyper.py's "push". Use it
 to see what is actually on Cloud right now -- including calculated fields,
 folders, or aliases that someone added in Tableau Desktop or web authoring,
 which your local .hyper + metadata JSON know nothing about. Because publish
@@ -15,10 +15,12 @@ uses PublishMode.Overwrite, those browser-side additions are exactly what a
 blind republish would wipe out; download them first to inspect (or preserve)
 them.
 
-It reuses publish_to_tableau_cloud.py's .env loading and project lookup, so it
-reads the same TABLEAU_* variables (see .env.example). By default it downloads
-the model only (include_extract=False) -- fast and small, since you want the
-XML, not the extract data. Pass --with-extract to fetch the whole .tdsx.
+It reuses the project's shared Tableau Cloud helpers rather than duplicating
+them -- tableau_auth.py (config + sign-in) and tableau_lookup.py (project
+lookup) -- so it reads the same TABLEAU_* variables (see .env.example). By
+default it downloads the model only (include_extract=False) -- fast and
+small, since you want the XML, not the extract data. Pass --with-extract to
+fetch the whole .tdsx.
 
 Never commit .env, paste its contents into chat, or share it: it holds a
 Tableau Personal Access Token that can read (and, via the publish script,
@@ -54,10 +56,9 @@ import zipfile
 
 import tableauserverclient as TSC
 
-# Reuse the publish script's .env loading and project lookup rather than
-# duplicating them -- both live here in scripts/ and are import-safe (their
-# real work is guarded behind `if __name__ == "__main__"`).
-from publish_to_tableau_cloud import find_project, load_config
+from tableau_auth import load_config, connect
+from tableau_lookup import find_project
+from tds_model import read_tds_from_tdsx
 
 
 def parse_args():
@@ -130,14 +131,11 @@ def extract_tds_bytes(download_path):
     .tdsx (a zip containing the .tds + the extract) or a bare .tds. Detects the
     zip by content, not extension, since download() picks the extension itself.
     """
-    if zipfile.is_zipfile(download_path):
-        with zipfile.ZipFile(download_path) as zf:
-            tds_names = [n for n in zf.namelist() if n.endswith(".tds")]
-            if not tds_names:
-                raise SystemExit(f"No .tds file found inside {download_path!r}.")
-            return tds_names[0], zf.read(tds_names[0])
     with open(download_path, "rb") as f:
-        return os.path.basename(download_path), f.read()
+        data = f.read()
+    if zipfile.is_zipfile(download_path):
+        return read_tds_from_tdsx(data)
+    return os.path.basename(download_path), data
 
 
 def summarize_tds(tds_bytes):
@@ -186,12 +184,7 @@ def main():
 
     config = load_config()
 
-    tableau_auth = TSC.PersonalAccessTokenAuth(
-        config["token_name"], config["token_secret"], site_id=config["site_content_url"]
-    )
-    server = TSC.Server(config["server_url"], use_server_version=True)
-
-    with server.auth.sign_in(tableau_auth):
+    with connect(config) as server:
         if args.id:
             datasource = resolve_datasource(server, None, None, args.id)
         else:

@@ -1,10 +1,10 @@
 """
-update_cloud_hyper_data.py
+serverside_publish_hyper.py
 
 Grow a published Tableau Cloud data source by pushing individual .hyper
 "pieces" to it and letting Cloud union them SERVER-SIDE, instead of unioning
 everything locally (union_hyper_files.py) and republishing one large extract
-(publish_to_tableau_cloud.py).
+(clientside_publish_hyper.py).
 
 Why this exists
 ---------------
@@ -35,7 +35,7 @@ Model is preserved
 `update_hyper_data` changes DATA only, so calculated fields, column
 descriptions, folders and aliases already on the data source survive
 untouched -- no .tds download/patch/rebuild is needed (unlike
-publish_to_tableau_cloud.py). The one exception is the create path (a brand-new
+clientside_publish_hyper.py). The one exception is the create path (a brand-new
 data source published from a bare piece has only the fields in the extract).
 
 The size ceiling still applies PER PIECE
@@ -63,10 +63,11 @@ extract as "Extract"."Extract" on Cloud (see data/Finished_Merged.tds's
 defaults differ from the source. If an update fails complaining about an
 unknown table, flip --target-schema (e.g. to public); both are configurable.
 
-Configuration (TABLEAU_* env vars) and the .env handling are shared with
-publish_to_tableau_cloud.py -- see .env.example. Every run writes a full,
-timestamped record to a per-run log file under logs/ (e.g.
-logs/update_20260914-093015.log); --silent only silences the console, never
+Configuration (TABLEAU_* env vars), signing in, and logging setup are shared
+with the other scripts in scripts/ -- see tableau_auth.py and
+tableau_logging.py; see .env.example for the env vars themselves. Every run
+writes a full, timestamped record to a per-run log file under logs/ (e.g.
+logs/serverside_20260914-093015.log); --silent only silences the console, never
 the log.
 
 Never commit .env, paste its contents into chat, or share it: it holds a
@@ -75,39 +76,35 @@ Tableau Personal Access Token that can overwrite content on your site.
 Usage (run from the project root):
     # Build the whole test data source from all yearly pieces server-side
     # (creates it if it doesn't exist):
-    python3 scripts/update_cloud_hyper_data.py --mode reload
+    python3 scripts/serverside_publish_hyper.py --mode reload
 
     # Append just the new season's piece to it:
-    python3 scripts/update_cloud_hyper_data.py --mode append --files data/Start_2026.hyper
+    python3 scripts/serverside_publish_hyper.py --mode append --files data/Start_2026.hyper
 
     # See the plan + per-piece size report without calling Cloud:
-    python3 scripts/update_cloud_hyper_data.py --mode reload --dry-run
+    python3 scripts/serverside_publish_hyper.py --mode reload --dry-run
 
     # Push to a specific data source (e.g. the real one, once validated):
-    python3 scripts/update_cloud_hyper_data.py --mode reload --datasource-name "Finished Merged"
+    python3 scripts/serverside_publish_hyper.py --mode reload --datasource-name "Finished Merged"
 """
 
 import argparse
-import functools
 import logging
 import os
-import sys
 import uuid
-from datetime import datetime
 from glob import glob
 
 import tableauserverclient as TSC
 
-# Reuse the publish script's .env loading and lookups rather than duplicating
-# them -- both live here in scripts/ and are import-safe (their real work is
-# guarded behind `if __name__ == "__main__"`). find_project/find_datasource
-# log to publish's own logger; only their return values matter here.
-from publish_to_tableau_cloud import find_project, find_datasource, load_config
+from tableau_auth import load_config, connect
+from tableau_logging import setup_logging, make_section
+from tableau_lookup import find_project, find_datasource
 
 # All human-readable output goes through this logger, never print(), so the
 # same messages reach a timestamped log file (always) and stdout (unless
 # --silent). See setup_logging().
-logger = logging.getLogger("update_cloud_hyper_data")
+logger = logging.getLogger("serverside_publish_hyper")
+section = make_section(logger)
 
 # Default target data source name -- deliberately NOT "Finished Merged" so this
 # leaves the live data source alone while you validate the server-side union.
@@ -129,48 +126,6 @@ DEFAULT_TARGET_TABLE = "Extract"
 # runs correctly from anywhere.
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 DEFAULT_GLOB = os.path.join(DATA_DIR, "Start_*.hyper")
-
-
-class section:
-    """
-    Section marker
-    --------------
-    Names a block of work so the log tells you which stage is running and, if
-    something breaks, exactly which stage broke. Mirrors the helper of the same
-    name in publish_to_tableau_cloud.py. Usable as a decorator or a context
-    manager:
-
-        with section("insert Start_2026.hyper"):
-            ...
-
-    On entry it logs "Section: <name>" (DEBUG -- recorded in the log file
-    without cluttering the console). If the block raises an ordinary Exception
-    it logs "Error in section '<name>': ..." once (the innermost section wins)
-    then lets it propagate; SystemExit passes through untouched.
-    """
-
-    def __init__(self, name):
-        self.name = name
-
-    def __enter__(self):
-        logger.debug("Section: %s", self.name)
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        if isinstance(exc, Exception) and not getattr(exc, "_section_logged", False):
-            logger.error("Error in section %r: %s", self.name, exc)
-            try:
-                exc._section_logged = True
-            except Exception:
-                pass  # a few exception types forbid attribute assignment
-        return False  # never suppress the exception
-
-    def __call__(self, func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            with section(self.name):
-                return func(*args, **kwargs)
-        return wrapper
 
 
 def parse_args():
@@ -280,43 +235,6 @@ def parse_args():
         ),
     )
     return parser.parse_args()
-
-
-def setup_logging(silent):
-    """
-    Wire up logging so every run leaves a full, timestamped trail on disk,
-    regardless of --silent or --dry-run. Mirrors publish_to_tableau_cloud.py:
-    a DEBUG file handler under logs/ captures everything; an INFO stdout handler
-    is added only when not silent. Returns the log file path.
-    """
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    log_dir = os.path.join(project_root, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, f"update_{datetime.now():%Y%m%d-%H%M%S}.log")
-
-    logger.setLevel(logging.DEBUG)
-    logger.handlers.clear()  # idempotent if ever called more than once
-
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    )
-    logger.addHandler(file_handler)
-
-    if not silent:
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(logging.Formatter("%(message)s"))
-        logger.addHandler(console_handler)
-
-    # Name the script at the very top of every log (and console) so a log file
-    # is unmistakably attributable: logs/ also holds publish_*.log from the
-    # publish script, and this header -- plus the update_/publish_ filename
-    # prefix -- keeps the two apart at a glance.
-    logger.info("Script: %s", os.path.basename(__file__))
-
-    return log_path
 
 
 @section("resolve piece files")
@@ -493,7 +411,8 @@ def _run(args):
     # config or network, and aborts a too-big run before anything uploads.
     check_payload_sizes(files, args.max_payload_mb)
 
-    config = load_config()
+    with section("load configuration"):
+        config = load_config()
 
     if args.id and args.create_new:
         raise SystemExit(
@@ -506,13 +425,8 @@ def _run(args):
         print_dry_run(config, args, files)
         return
 
-    tableau_auth = TSC.PersonalAccessTokenAuth(
-        config["token_name"], config["token_secret"], site_id=config["site_content_url"]
-    )
-    server = TSC.Server(config["server_url"], use_server_version=True)
-
     logger.debug("Signing in to %s (site %r)...", config["server_url"], config["site_content_url"])
-    with section("sign in"), server.auth.sign_in(tableau_auth):
+    with section("sign in"), connect(config) as server:
         logger.debug("Signed in; server API version %s", server.version)
 
         # Resolve the target data source (by LUID or by name within the project).
@@ -573,7 +487,12 @@ def _run(args):
 
 def main():
     args = parse_args()
-    log_path = setup_logging(args.silent)
+    log_path = setup_logging(logger, "serverside", args.silent)
+    # Name the script at the very top of every log (and console) so a log
+    # file is unmistakably attributable: logs/ also holds clientside_*.log
+    # from clientside_publish_hyper.py and metadata_*.log from
+    # publish_metadata.py.
+    logger.info("Script: %s", os.path.basename(__file__))
     logger.info("Logging this run to %s", log_path)
     logger.debug(
         "Args: mode=%s files=%r datasource=%r id=%r target=%r.%r source=%r.%r "
